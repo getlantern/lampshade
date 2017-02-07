@@ -1,4 +1,4 @@
-package connmux
+package lampshade
 
 import (
 	"net"

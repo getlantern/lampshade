@@ -1,14 +1,16 @@
-package connmux
+package lampshade
 
 import (
+	"crypto/rsa"
+	"fmt"
 	"net"
 	"sync"
 )
 
 // Dialer is like StreamDialer but provides a function that returns a net.Conn
 // for easier integration with code that needs this interface.
-func Dialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, dial func() (net.Conn, error)) func() (net.Conn, error) {
-	d := StreamDialer(windowSize, maxStreamsPerConn, pool, dial)
+func Dialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
+	d := StreamDialer(windowSize, maxStreamsPerConn, pool, serverPublicKey, dial)
 	return func() (net.Conn, error) {
 		return d()
 	}
@@ -32,7 +34,11 @@ func Dialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, dial func
 //                     <=0, defaults to max uint32.
 //
 // pool - BufferPool to use
-func StreamDialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, dial func() (net.Conn, error)) func() (Stream, error) {
+//
+// serverPublicKey - if provided, this dialer will use encryption.
+//
+// dial - function to open an underlying connection.
+func StreamDialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}
@@ -41,6 +47,7 @@ func StreamDialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, dia
 		windowSize:       windowSize,
 		maxStreamPerConn: maxStreamsPerConn,
 		pool:             pool,
+		serverPublicKey:  serverPublicKey,
 	}
 	return d.dial
 }
@@ -50,6 +57,7 @@ type dialer struct {
 	windowSize       int
 	maxStreamPerConn uint32
 	pool             BufferPool
+	serverPublicKey  *rsa.PublicKey
 	current          *session
 	id               uint32
 	mx               sync.Mutex
@@ -87,16 +95,41 @@ func (d *dialer) startSession() (*session, error) {
 		d.mx.Unlock()
 		return nil, err
 	}
-	sessionStart := make([]byte, sessionStartTotalLen)
-	copy(sessionStart, sessionStartBytes)
-	sessionStart[sessionStartHeaderLen] = protocolVersion1
-	sessionStart[sessionStartHeaderLen+1] = byte(d.windowSize)
-	_, writeErr := conn.Write(sessionStart)
-	if writeErr != nil {
-		conn.Close()
-		return nil, writeErr
+
+	// Each session gets a new secret
+	secret, err := newAESSecret()
+	if err != nil {
+		return nil, fmt.Errorf("Unable to create AES secret: %v", err)
 	}
-	d.current = startSession(conn, d.windowSize, d.pool, nil, d.sessionClosed)
+
+	// Create initialization vector for sending to server
+	sendIV, err := newIV()
+	if err != nil {
+		return nil, fmt.Errorf("Unable to create send initialization vector: %v", err)
+	}
+
+	// Create initialization vector for receiving from server
+	recvIV, err := newIV()
+	if err != nil {
+		return nil, fmt.Errorf("Unable to create recv initialization vector: %v", err)
+	}
+
+	// Generate the client init message
+	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, secret, sendIV, recvIV)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
+	}
+
+	decrypt, err := newAESCipher(secret, recvIV)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to initialize decryption cipher: %v", err)
+	}
+	encrypt, err := newAESCipher(secret, sendIV)
+	if err != nil {
+		return nil, fmt.Errorf("Unable to initialize encryption cipher: %v", err)
+	}
+
+	d.current = startSession(conn, d.windowSize, decrypt, encrypt, clientInitMsg, d.pool, nil, d.sessionClosed)
 	return d.current, nil
 }
 

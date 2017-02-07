@@ -1,7 +1,6 @@
-package connmux
+package lampshade
 
 import (
-	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -9,6 +8,7 @@ import (
 	"time"
 
 	"github.com/getlantern/fdcount"
+	"github.com/getlantern/keyman"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,10 +17,6 @@ const (
 
 	windowSize = 2
 )
-
-func TestConnNoMultiplex(t *testing.T) {
-	doTestConnBasicFlow(t, false)
-}
 
 func TestConnMultiplex(t *testing.T) {
 	doTestConnBasicFlow(t, true)
@@ -187,29 +183,37 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 	if !assert.NoError(t, err) {
 		return
 	}
+	log.Debug("Closing")
 	// Close physical connection immediately
 	conn.(Stream).Session().Close()
+	log.Debug("Closed")
 	time.Sleep(50 * time.Millisecond)
 
+	log.Debug("Writing stop")
 	_, err = conn.Write([]byte("stop"))
 	assert.Equal(t, ErrBrokenPipe, err)
 
+	log.Debug("Reading")
 	b := make([]byte, 4)
 	n, err := conn.Read(b)
+	log.Debugf("Read %v", err)
 	assert.Error(t, err)
 	assert.Equal(t, 0, n)
 
 	// Now dial again and make sure that works
+	log.Debug("Dialing again")
 	conn, err = dial()
 	if !assert.NoError(t, err) {
 		return
 	}
 
+	log.Debug("Writing")
 	_, err = conn.Write([]byte(testdata))
 	if !assert.NoError(t, err) {
 		return
 	}
 
+	log.Debug("Reading again")
 	b = make([]byte, len(testdata))
 	n, err = io.ReadFull(conn, b)
 	if !assert.NoError(t, err) {
@@ -290,20 +294,32 @@ func echoServerAndDialer(maxStreamsPerConn uint32) (net.Listener, func() (net.Co
 }
 
 func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint32) (net.Listener, func() (net.Conn, error), *sync.WaitGroup, error) {
+	pk, err := keyman.GeneratePK(2048)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
 	wrapped, err := net.Listen("tcp", "localhost:0")
 	if err != nil {
 		return nil, nil, nil, err
 	}
 
 	pool := NewBufferPool(100)
-	l := WrapListener(wrapped, pool)
+	l := WrapListener(wrapped, pool, pk.RSA())
 
 	var wg sync.WaitGroup
 	go func() {
+	acceptLoop:
 		for {
 			conn, acceptErr := l.Accept()
 			if acceptErr != nil {
 				log.Errorf("Unable to accept connection: %v", acceptErr)
+				switch t := acceptErr.(type) {
+				case net.Error:
+					if t.Temporary() {
+						continue acceptLoop
+					}
+				}
 				return
 			}
 
@@ -345,7 +361,7 @@ func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint32) (net.Listener, fu
 	}
 
 	if mux {
-		dialer = Dialer(windowSize, maxStreamsPerConn, pool, dialer)
+		dialer = Dialer(windowSize, maxStreamsPerConn, pool, &pk.RSA().PublicKey, dialer)
 	}
 
 	return l, dialer, &wg, nil
@@ -354,12 +370,17 @@ func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint32) (net.Listener, fu
 func TestConcurrency(t *testing.T) {
 	concurrency := 100
 
+	pk, err := keyman.GeneratePK(2048)
+	if !assert.NoError(t, err) {
+		return
+	}
+
 	pool := NewBufferPool(concurrency * windowSize * 3)
 	_lst, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("Unable to listen: %v", err)
 	}
-	lst := WrapListener(_lst, pool)
+	lst := WrapListener(_lst, pool, pk.RSA())
 
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
@@ -377,7 +398,7 @@ func TestConcurrency(t *testing.T) {
 		}
 	}()
 
-	dial := Dialer(windowSize, 0, NewBufferPool(100), func() (net.Conn, error) {
+	dial := Dialer(windowSize, 0, NewBufferPool(100), &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})
 
@@ -401,11 +422,10 @@ func TestConcurrency(t *testing.T) {
 			}
 			totalN += n
 			if totalN == 10 {
-				assert.Equal(t, "0123456789", string(b[:totalN]))
+				assert.Equal(t, "abcdefghij", string(b[:totalN]))
 				break
 			}
 		}
-
 	}
 
 	for _, conn := range conns {
@@ -435,8 +455,9 @@ func echo(t *testing.T, conn net.Conn, pool BufferPool) {
 }
 
 func feed(t *testing.T, conn net.Conn) {
+	letters := []byte("abcdefghij")
 	for i := 0; i < 10; i++ {
-		_, err := conn.Write([]byte(fmt.Sprint(i)))
+		_, err := conn.Write(letters[i : i+1])
 		if err != nil {
 			t.Fatal("Unable to feed")
 		}
@@ -444,13 +465,18 @@ func feed(t *testing.T, conn net.Conn) {
 }
 
 func BenchmarkConnMux(b *testing.B) {
+	pk, err := keyman.GeneratePK(2048)
+	if err != nil {
+		b.Fatal(err)
+	}
+
 	_lst, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		b.Fatal(err)
 	}
-	lst := WrapListener(_lst, NewBufferPool(100))
+	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA())
 
-	conn, err := Dialer(25, 0, NewBufferPool(100), func() (net.Conn, error) {
+	conn, err := Dialer(25, 0, NewBufferPool(100), &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})()
 	if err != nil {

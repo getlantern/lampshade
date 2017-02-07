@@ -1,4 +1,4 @@
-package connmux
+package lampshade
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 )
 
 func TestSendBuffer(t *testing.T) {
-	id := make([]byte, idLen)
+	id := make([]byte, idSize)
 	binaryEncoding.PutUint32(id, 27)
 
 	depth := 5

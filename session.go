@@ -1,46 +1,49 @@
-package connmux
+package lampshade
 
 import (
+	"crypto/cipher"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 )
 
-const (
-	coalesceThreshold = 1500 // basically this is the practical TCP MTU for anything traversing Ethernet
-)
-
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
 type session struct {
 	net.Conn
-	windowSize  int
-	pool        BufferPool
-	out         chan []byte
-	streams     map[uint32]*stream
-	closed      map[uint32]bool
-	connCh      chan net.Conn
-	beforeClose func(*session)
-	mx          sync.RWMutex
+	windowSize    int
+	decrypt       func([]byte)                 // decrypt in place
+	encrypt       func(dst []byte, src []byte) // encrypt to a destination
+	clientInitMsg []byte
+	pool          BufferPool
+	out           chan []byte
+	streams       map[uint32]*stream
+	closed        map[uint32]bool
+	connCh        chan net.Conn
+	beforeClose   func(*session)
+	mx            sync.RWMutex
 }
 
 // startSession starts a session on the given net.Conn using the given transmit
 // windowSize and pool. If connCh is provided, the session will notify of new
 // streams as they are opened. If beforeClose is provided, the session will use
 // it to notify when it's about to close.
-func startSession(conn net.Conn, windowSize int, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
+func startSession(conn net.Conn, windowSize int, decrypt cipher.Stream, encrypt cipher.Stream, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
 	s := &session{
-		Conn:        conn,
-		windowSize:  windowSize,
-		pool:        pool,
-		out:         make(chan []byte),
-		streams:     make(map[uint32]*stream),
-		closed:      make(map[uint32]bool),
-		connCh:      connCh,
-		beforeClose: beforeClose,
+		Conn:          conn,
+		windowSize:    windowSize,
+		decrypt:       func(b []byte) { decrypt.XORKeyStream(b, b) },
+		encrypt:       func(dst []byte, src []byte) { encrypt.XORKeyStream(dst, src) },
+		clientInitMsg: clientInitMsg,
+		pool:          pool,
+		out:           make(chan []byte),
+		streams:       make(map[uint32]*stream),
+		closed:        make(map[uint32]bool),
+		connCh:        connCh,
+		beforeClose:   beforeClose,
 	}
-	go s.sendLoop(pool)
+	go s.sendLoop()
 	go s.recvLoop()
 	return s
 }
@@ -49,10 +52,10 @@ func (s *session) recvLoop() {
 	for {
 		b := s.pool.getForFrame()
 		// First read id
-		id := b[:idLen]
+		id := b[:idSize]
 		_, err := io.ReadFull(s, id)
 		if err != nil {
-			s.onSessionError(err, nil)
+			s.onSessionError(fmt.Errorf("Unable to read id: %v", err), nil)
 			return
 		}
 
@@ -91,7 +94,7 @@ func (s *session) recvLoop() {
 		}
 
 		// Read frame length
-		dataLength := b[idLen:frameHeaderLen]
+		dataLength := b[idSize:frameHeaderSize]
 		_, err = io.ReadFull(s, dataLength)
 		if err != nil {
 			s.onSessionError(err, nil)
@@ -99,10 +102,9 @@ func (s *session) recvLoop() {
 		}
 
 		_dataLength := int(binaryEncoding.Uint16(dataLength))
-
 		// Read frame
-		b = b[:frameHeaderLen+_dataLength]
-		_, err = io.ReadFull(s, b[frameHeaderLen:])
+		b = b[:frameHeaderSize+_dataLength]
+		_, err = io.ReadFull(s, b[frameHeaderSize:])
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
@@ -117,37 +119,51 @@ func (s *session) recvLoop() {
 	}
 }
 
-func (s *session) sendLoop(pool BufferPool) {
-	coalesceBuffer := pool.Get()
-	defer pool.Put(coalesceBuffer)
+func (s *session) sendLoop() {
+	// Use maxFrameSize * 2 for coalesce buffer to avoid having to grow it
+	coalesceBuffer := make([]byte, maxFrameSize*2)
+	coalescedBytes := 0
+
+	coalesce := func(b []byte) {
+		dst := coalesceBuffer[coalescedBytes:]
+		s.encrypt(dst, b)
+		coalescedBytes += len(b)
+	}
 
 	bufferFrame := func(frame []byte) {
-		dataLen := len(frame) - idLen
+		dataLen := len(frame) - idSize
 		if dataLen > MaxDataLen {
 			panic(fmt.Sprintf("Data length of %d exceeds maximum allowed of %d", dataLen, MaxDataLen))
 		}
 		id := frame[dataLen:]
-		coalesceBuffer = append(coalesceBuffer, id...)
+		coalesce(id)
 		if frameType(id) != frameTypeData {
 			// control message, no data
 			return
 		}
-		length := make([]byte, lenLen)
+		length := make([]byte, lenSize)
 		binaryEncoding.PutUint16(length, uint16(dataLen))
-		coalesceBuffer = append(coalesceBuffer, length...)
-		coalesceBuffer = append(coalesceBuffer, frame[:dataLen]...)
+		coalesce(length)
+		coalesce(frame[:dataLen])
 		// Put frame back in pool
-		s.pool.Put(frame[:maxFrameLen])
+		s.pool.Put(frame[:maxFrameSize])
 	}
 
 	for frame := range s.out {
 		// Coalesce pending writes. This helps with performance and blocking
 		// resistence by combining packets.
-		coalesceBuffer = coalesceBuffer[:0]
+		coalescedBytes = 0
 		coalesced := 1
+		if s.clientInitMsg != nil {
+			// Lazily send client init message with first data
+			copy(coalesceBuffer, s.clientInitMsg)
+			coalescedBytes += clientInitSize
+			coalesced++
+			s.clientInitMsg = nil
+		}
 		bufferFrame(frame)
 	coalesceLoop:
-		for len(coalesceBuffer) < coalesceThreshold {
+		for coalescedBytes < coalesceThreshold {
 			select {
 			case frame = <-s.out:
 				// pending frame immediately available, add it
@@ -160,9 +176,9 @@ func (s *session) sendLoop(pool BufferPool) {
 		}
 
 		if log.IsTraceEnabled() {
-			log.Tracef("Coalesced %d for total of %d", coalesced, len(coalesceBuffer))
+			log.Tracef("Coalesced %d for total of %d", coalesced, coalescedBytes)
 		}
-		_, err := s.Write(coalesceBuffer)
+		_, err := s.Write(coalesceBuffer[:coalescedBytes])
 		if err != nil {
 			s.onSessionError(nil, err)
 			return
@@ -215,7 +231,7 @@ func (s *session) getOrCreateStream(id uint32) (*stream, bool) {
 		return nil, false
 	}
 
-	_id := make([]byte, idLen)
+	_id := make([]byte, idSize)
 	binaryEncoding.PutUint32(_id, id)
 	c = &stream{
 		Conn:    s,
@@ -231,6 +247,12 @@ func (s *session) getOrCreateStream(id uint32) (*stream, bool) {
 		s.connCh <- c
 	}
 	return c, true
+}
+
+func (s *session) Read(b []byte) (int, error) {
+	n, err := s.Conn.Read(b)
+	s.decrypt(b[:n])
+	return n, err
 }
 
 func (s *session) Close() error {

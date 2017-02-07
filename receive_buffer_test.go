@@ -1,4 +1,4 @@
-package connmux
+package lampshade
 
 import (
 	"fmt"
@@ -10,7 +10,7 @@ import (
 )
 
 func TestReceiveBuffer(t *testing.T) {
-	id := make([]byte, idLen)
+	id := make([]byte, idSize)
 	binaryEncoding.PutUint32(id, 27)
 
 	depth := 5
@@ -20,8 +20,8 @@ func TestReceiveBuffer(t *testing.T) {
 	buf := newReceiveBuffer(id, ack, pool, depth)
 	for i := 0; i < 2; i++ {
 		b := pool.Get()
-		b[frameHeaderLen] = fmt.Sprint(i)[0]
-		buf.submit(b[:frameHeaderLen+1])
+		b[frameHeaderSize] = fmt.Sprint(i)[0]
+		buf.submit(b[:frameHeaderSize+1])
 	}
 
 	b := make([]byte, 2)
@@ -31,7 +31,7 @@ func TestReceiveBuffer(t *testing.T) {
 	}
 	assert.Equal(t, 2, n)
 	assert.Equal(t, "01", string(b[:n]))
-	assert.Equal(t, maxFrameLen, pool.getTotalReturned(), "Failed to return first buffer to pool")
+	assert.Equal(t, maxFrameSize, pool.getTotalReturned(), "Failed to return first buffer to pool")
 
 	totalAcks := 0
 ackloop:
@@ -39,11 +39,11 @@ ackloop:
 		select {
 		case a := <-ack:
 			if assert.EqualValues(t, frameTypeACK, a[0]) {
-				a2 := make([]byte, idLen)
+				a2 := make([]byte, idSize)
 				copy(a2, a)
 				a2[0] = 0
 				if assert.EqualValues(t, id, a2) {
-					totalAcks += 1
+					totalAcks++
 				}
 			}
 		default:
@@ -58,11 +58,11 @@ type testpool struct {
 }
 
 func (tp *testpool) getForFrame() []byte {
-	return make([]byte, maxFrameLen)
+	return make([]byte, maxFrameSize)
 }
 
 func (tp *testpool) Get() []byte {
-	return make([]byte, MaxDataLen, maxFrameLen)
+	return make([]byte, MaxDataLen, maxFrameSize)
 }
 
 func (tp *testpool) Put(b []byte) {

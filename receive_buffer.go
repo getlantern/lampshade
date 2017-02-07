@@ -1,4 +1,4 @@
-package connmux
+package lampshade
 
 import (
 	"io"
@@ -124,10 +124,10 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 func (buf *receiveBuffer) onFrame(frame []byte) {
 	if buf.poolable != nil {
 		// Return previous frame to pool
-		buf.pool.Put(buf.poolable[:maxFrameLen])
+		buf.pool.Put(buf.poolable[:maxFrameSize])
 	}
 	buf.poolable = frame
-	buf.current = frame[frameHeaderLen:]
+	buf.current = frame[frameHeaderSize:]
 	// immediately acknowledge that we've queued a frame
 	buf.ack <- buf.ackFrame
 }
