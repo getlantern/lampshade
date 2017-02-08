@@ -10,6 +10,11 @@
 // Due to lampshade being multiplexed, especially during periods of high
 // activity, coalescing is often possible.
 //
+// Note - lampshade does not ensure message integrity and authenticity, it
+// simply encrypts in order to obfuscate the real content of a data stream.
+// Applications running over lampshade should continue to use TLS or other
+// mechanisms to ensure full integrity, authenticity and confidentiality.
+//
 // Definitions:
 //
 //   physical connection - an underlying (e.g. TCP) connection
