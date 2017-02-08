@@ -199,7 +199,7 @@ func (s *session) sendLoop() {
 			log.Tracef("Coalesced %d for total of %d", coalesced, coalescedBytes)
 		}
 
-		if coalesced == 1 {
+		if coalesced == 1 && coalescedBytes < coalesceThreshold {
 			// Add random padding whenever we failed to coalesce
 			randLength, randErr := rand.Int(rand.Reader, s.maxPadding)
 			if randErr != nil {
