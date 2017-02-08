@@ -1,7 +1,9 @@
 package lampshade
 
 import (
+	"crypto/tls"
 	"io"
+	"math/rand"
 	"net"
 	"sync"
 	"testing"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/getlantern/fdcount"
 	"github.com/getlantern/keyman"
+	"github.com/getlantern/tlsdefaults"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -17,6 +20,14 @@ const (
 
 	windowSize = 2
 )
+
+var (
+	largeData = make([]byte, MaxDataLen)
+)
+
+func init() {
+	rand.Read(largeData)
+}
 
 func TestConnMultiplex(t *testing.T) {
 	doTestConnBasicFlow(t, true)
@@ -183,37 +194,29 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 	if !assert.NoError(t, err) {
 		return
 	}
-	log.Debug("Closing")
 	// Close physical connection immediately
 	conn.(Stream).Session().Close()
-	log.Debug("Closed")
 	time.Sleep(50 * time.Millisecond)
 
-	log.Debug("Writing stop")
 	_, err = conn.Write([]byte("stop"))
 	assert.Equal(t, ErrBrokenPipe, err)
 
-	log.Debug("Reading")
 	b := make([]byte, 4)
 	n, err := conn.Read(b)
-	log.Debugf("Read %v", err)
 	assert.Error(t, err)
 	assert.Equal(t, 0, n)
 
 	// Now dial again and make sure that works
-	log.Debug("Dialing again")
 	conn, err = dial()
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	log.Debug("Writing")
 	_, err = conn.Write([]byte(testdata))
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	log.Debug("Reading again")
 	b = make([]byte, len(testdata))
 	n, err = io.ReadFull(conn, b)
 	if !assert.NoError(t, err) {
@@ -299,7 +302,13 @@ func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint32) (net.Listener, fu
 		return nil, nil, nil, err
 	}
 
-	wrapped, err := net.Listen("tcp", "localhost:0")
+	wrapped, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	pkFile, certFile := "pkfile.pem", "certfile.pem"
+	wrapped, err = tlsdefaults.NewListener(wrapped, pkFile, certFile)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -357,7 +366,7 @@ func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint32) (net.Listener, fu
 	}()
 
 	dialer := func() (net.Conn, error) {
-		return net.Dial("tcp", l.Addr().String())
+		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 	}
 
 	if mux {
@@ -376,14 +385,11 @@ func TestConcurrency(t *testing.T) {
 	}
 
 	pool := NewBufferPool(concurrency * windowSize * 3)
-	_lst, err := net.Listen("tcp", "127.0.0.1:0")
+	_lst, err := net.Listen("tcp", ":0")
 	if err != nil {
 		t.Fatalf("Unable to listen: %v", err)
 	}
 	lst := WrapListener(_lst, pool, pk.RSA())
-
-	var wg sync.WaitGroup
-	wg.Add(concurrency)
 
 	go func() {
 		for {
@@ -392,8 +398,7 @@ func TestConcurrency(t *testing.T) {
 				t.Fatalf("Unable to accept: %v", err)
 			}
 			go func() {
-				echo(t, conn, pool)
-				wg.Done()
+				io.Copy(conn, conn)
 			}()
 		}
 	}()
@@ -402,62 +407,43 @@ func TestConcurrency(t *testing.T) {
 		return net.Dial("tcp", lst.Addr().String())
 	})
 
-	var conns []net.Conn
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+
 	for i := 0; i < concurrency; i++ {
-		conn, err := dial()
-		if !assert.NoError(t, err) {
-			t.Fatal("Can't dial")
-		}
-		conns = append(conns, conn)
-		go feed(t, conn)
-	}
-
-	for _, conn := range conns {
-		b := make([]byte, 50)
-		totalN := 0
-		for {
-			n, err := conn.Read(b[totalN:])
+		go func() {
+			defer wg.Done()
+			conn, err := dial()
 			if !assert.NoError(t, err) {
-				t.Fatalf("Unable to read: %v", err)
+				t.Fatal("Can't dial")
 			}
-			totalN += n
-			if totalN == 10 {
-				assert.Equal(t, "abcdefghij", string(b[:totalN]))
-				break
-			}
-		}
-	}
+			defer conn.Close()
+			go feed(t, conn)
 
-	for _, conn := range conns {
-		conn.Close()
+			b := make([]byte, windowSize*3*MaxDataLen)
+			totalN := 0
+			for {
+				n, err := conn.Read(b[totalN:])
+				if !assert.NoError(t, err) {
+					t.Fatalf("Unable to read: %v", err)
+				}
+				totalN += n
+				if totalN == windowSize*3*MaxDataLen {
+					for i := 0; i < 3; i++ {
+						assert.EqualValues(t, largeData[i*windowSize:i*windowSize*2], string(b[i*windowSize:i*windowSize*2]))
+					}
+					return
+				}
+			}
+		}()
 	}
 
 	wg.Wait()
 }
 
-func echo(t *testing.T, conn net.Conn, pool BufferPool) {
-	defer conn.Close()
-	b := make([]byte, MaxDataLen)
-	for {
-		n, err := conn.Read(b)
-		if err == io.EOF {
-			// Done
-			return
-		}
-		if !assert.NoError(t, err) {
-			t.Fatal("Unable to read for echo")
-		}
-		_, err = conn.Write(b[:n])
-		if !assert.NoError(t, err) {
-			t.Fatal("Unable to echo")
-		}
-	}
-}
-
 func feed(t *testing.T, conn net.Conn) {
-	letters := []byte("abcdefghij")
-	for i := 0; i < 10; i++ {
-		_, err := conn.Write(letters[i : i+1])
+	for i := 0; i < windowSize*3; i++ {
+		_, err := conn.Write(largeData)
 		if err != nil {
 			t.Fatal("Unable to feed")
 		}
@@ -470,7 +456,7 @@ func BenchmarkConnMux(b *testing.B) {
 		b.Fatal(err)
 	}
 
-	_lst, err := net.Listen("tcp", "127.0.0.1:0")
+	_lst, err := net.Listen("tcp", ":0")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -487,7 +473,7 @@ func BenchmarkConnMux(b *testing.B) {
 }
 
 func BenchmarkTCP(b *testing.B) {
-	lst, err := net.Listen("tcp", "127.0.0.1:0")
+	lst, err := net.Listen("tcp", ":0")
 	if err != nil {
 		b.Fatal(err)
 	}

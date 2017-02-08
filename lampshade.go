@@ -97,7 +97,7 @@
 //   +--------------+-----------+----------+--------+
 //   | Message Type | Stream ID | Data Len |  Data  |
 //   +--------------+-----------+----------+--------+
-//   |       1      |     3     |     3    | <=8192 |
+//   |       1      |     3     |     2    | <=8192 |
 //   +--------------+-----------+----------+--------+
 //
 //   Message Type - 1 byte, indicates the message type.
@@ -135,7 +135,7 @@ const (
 
 	// framing
 	idSize          = 4
-	lenSize         = 4
+	lenSize         = 2
 	frameHeaderSize = idSize + lenSize
 
 	// MaxDataLen is the maximum length of data in a lampshade frame.
