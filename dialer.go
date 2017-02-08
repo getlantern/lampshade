@@ -9,8 +9,8 @@ import (
 
 // Dialer is like StreamDialer but provides a function that returns a net.Conn
 // for easier integration with code that needs this interface.
-func Dialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
-	d := StreamDialer(windowSize, maxStreamsPerConn, pool, serverPublicKey, dial)
+func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
+	d := StreamDialer(windowSize, maxPadding, maxStreamsPerConn, pool, serverPublicKey, dial)
 	return func() (net.Conn, error) {
 		return d()
 	}
@@ -30,6 +30,8 @@ func Dialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, serverPub
 // takes about 8KB of memory. 25 is a good default, 50 yields higher throughput,
 // more than 50 hasn't been seen to have much of an effect.
 //
+// maxPadding - maximum random padding to use when necessary.
+//
 // maxStreamsPerConn - limits the number of streams per physical connection. If
 //                     <=0, defaults to max uint32.
 //
@@ -38,13 +40,14 @@ func Dialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, serverPub
 // serverPublicKey - if provided, this dialer will use encryption.
 //
 // dial - function to open an underlying connection.
-func StreamDialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
+func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}
 	d := &dialer{
 		doDial:           dial,
 		windowSize:       windowSize,
+		maxPadding:       maxPadding,
 		maxStreamPerConn: maxStreamsPerConn,
 		pool:             pool,
 		serverPublicKey:  serverPublicKey,
@@ -55,6 +58,7 @@ func StreamDialer(windowSize int, maxStreamsPerConn uint32, pool BufferPool, ser
 type dialer struct {
 	doDial           func() (net.Conn, error)
 	windowSize       int
+	maxPadding       int
 	maxStreamPerConn uint32
 	pool             BufferPool
 	serverPublicKey  *rsa.PublicKey
@@ -115,7 +119,7 @@ func (d *dialer) startSession() (*session, error) {
 	}
 
 	// Generate the client init message
-	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, secret, sendIV, recvIV)
+	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, secret, sendIV, recvIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
@@ -129,7 +133,7 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}
 
-	d.current = startSession(conn, d.windowSize, decrypt, encrypt, clientInitMsg, d.pool, nil, d.sessionClosed)
+	d.current = startSession(conn, d.windowSize, d.maxPadding, decrypt, encrypt, clientInitMsg, d.pool, nil, d.sessionClosed)
 	return d.current, nil
 }
 

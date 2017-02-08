@@ -37,9 +37,10 @@ func newAESCipher(secret []byte, iv []byte) (cipher.Stream, error) {
 	return cipher.NewCTR(block, iv), nil
 }
 
-func buildClientInitMsg(serverPublicKey *rsa.PublicKey, windowSize int, secret []byte, sendIV []byte, recvIV []byte) ([]byte, error) {
+func buildClientInitMsg(serverPublicKey *rsa.PublicKey, windowSize int, maxPadding int, secret []byte, sendIV []byte, recvIV []byte) ([]byte, error) {
 	plainText := make([]byte, 0, winSize+secretSize+ivSize*2)
 	plainText = append(plainText, byte(windowSize))
+	plainText = append(plainText, byte(maxPadding))
 	plainText = append(plainText, secret...)
 	plainText = append(plainText, sendIV...)
 	plainText = append(plainText, recvIV...)
@@ -50,10 +51,21 @@ func buildClientInitMsg(serverPublicKey *rsa.PublicKey, windowSize int, secret [
 	return cipherText, nil
 }
 
-func decodeClientInitMsg(serverPrivateKey *rsa.PrivateKey, msg []byte) (windowSize int, secret []byte, sendIV []byte, recvIV []byte, err error) {
-	plainText, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, serverPrivateKey, msg, nil)
+func decodeClientInitMsg(serverPrivateKey *rsa.PrivateKey, msg []byte) (windowSize int, maxPadding int, secret []byte, sendIV []byte, recvIV []byte, err error) {
+	pt, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, serverPrivateKey, msg, nil)
 	if err != nil {
-		return 0, nil, nil, nil, fmt.Errorf("Unable to decrypt init message: %v", err)
+		return 0, 0, nil, nil, nil, fmt.Errorf("Unable to decrypt init message: %v", err)
 	}
-	return int(plainText[0]), plainText[winSize : winSize+secretSize], plainText[winSize+secretSize : winSize+secretSize*2], plainText[winSize+secretSize*2:], nil
+	_windowSize, pt := consume(pt, 1)
+	windowSize = int(_windowSize[0])
+	_maxPadding, pt := consume(pt, 1)
+	maxPadding = int(_maxPadding[0])
+	secret, pt = consume(pt, secretSize)
+	sendIV, pt = consume(pt, ivSize)
+	recvIV, _ = consume(pt, ivSize)
+	return
+}
+
+func consume(b []byte, length int) ([]byte, []byte) {
+	return b[:length], b[length:]
 }

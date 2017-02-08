@@ -2,8 +2,10 @@ package lampshade
 
 import (
 	"crypto/cipher"
+	"crypto/rand"
 	"fmt"
 	"io"
+	"math/big"
 	"net"
 	"sync"
 )
@@ -13,6 +15,7 @@ import (
 type session struct {
 	net.Conn
 	windowSize    int
+	maxPadding    *big.Int
 	decrypt       func([]byte)                 // decrypt in place
 	encrypt       func(dst []byte, src []byte) // encrypt to a destination
 	clientInitMsg []byte
@@ -29,10 +32,11 @@ type session struct {
 // windowSize and pool. If connCh is provided, the session will notify of new
 // streams as they are opened. If beforeClose is provided, the session will use
 // it to notify when it's about to close.
-func startSession(conn net.Conn, windowSize int, decrypt cipher.Stream, encrypt cipher.Stream, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
+func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt cipher.Stream, encrypt cipher.Stream, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
 	s := &session{
 		Conn:          conn,
 		windowSize:    windowSize,
+		maxPadding:    big.NewInt(int64(maxPadding)),
 		decrypt:       func(b []byte) { decrypt.XORKeyStream(b, b) },
 		encrypt:       func(dst []byte, src []byte) { encrypt.XORKeyStream(dst, src) },
 		clientInitMsg: clientInitMsg,
@@ -59,9 +63,12 @@ func (s *session) recvLoop() {
 			return
 		}
 
+		isPadding := false
 		isACK := false
 		isRST := false
 		switch frameType(id) {
+		case frameTypePadding:
+			isPadding = true
 		case frameTypeACK:
 			isACK = true
 		case frameTypeRST:
@@ -110,6 +117,11 @@ func (s *session) recvLoop() {
 			return
 		}
 
+		if isPadding {
+			// don't do anything with padding after we've read it
+			continue
+		}
+
 		c, open := s.getOrCreateStream(_id)
 		if !open {
 			// Stream was already closed, ignore
@@ -123,6 +135,15 @@ func (s *session) sendLoop() {
 	// Use maxFrameSize * 2 for coalesce buffer to avoid having to grow it
 	coalesceBuffer := make([]byte, maxFrameSize*2)
 	coalescedBytes := 0
+
+	// pre-allocate buffer for length to avoid extra allocations
+	lengthBuffer := make([]byte, lenSize)
+
+	// pre-allocate empty buffer for random padding
+	// note - we can use an empty buffer because after encryption with AES in CTR
+	// mode it is effectively random anyway.
+	randomPadding := make([]byte, frameHeaderSize+int(s.maxPadding.Int64()))
+	setFrameType(randomPadding, frameTypePadding)
 
 	coalesce := func(b []byte) {
 		dst := coalesceBuffer[coalescedBytes:]
@@ -141,9 +162,8 @@ func (s *session) sendLoop() {
 			// control message, no data
 			return
 		}
-		length := make([]byte, lenSize)
-		binaryEncoding.PutUint16(length, uint16(dataLen))
-		coalesce(length)
+		binaryEncoding.PutUint16(lengthBuffer, uint16(dataLen))
+		coalesce(lengthBuffer)
 		coalesce(frame[:dataLen])
 		// Put frame back in pool
 		s.pool.Put(frame[:maxFrameSize])
@@ -178,6 +198,22 @@ func (s *session) sendLoop() {
 		if log.IsTraceEnabled() {
 			log.Tracef("Coalesced %d for total of %d", coalesced, coalescedBytes)
 		}
+
+		if coalesced == 1 {
+			// Add random padding whenever we failed to coalesce
+			randLength, randErr := rand.Int(rand.Reader, s.maxPadding)
+			if randErr != nil {
+				s.onSessionError(nil, randErr)
+				return
+			}
+			if log.IsTraceEnabled() {
+				log.Tracef("Adding random padding of length: %d", randLength.Int64())
+			}
+			binaryEncoding.PutUint16(randomPadding[idSize:], uint16(randLength.Int64()))
+			coalesce(randomPadding[:frameHeaderSize+int(randLength.Int64())])
+		}
+
+		// Write coalesced data out
 		_, err := s.Write(coalesceBuffer[:coalescedBytes])
 		if err != nil {
 			s.onSessionError(nil, err)
