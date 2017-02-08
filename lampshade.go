@@ -6,7 +6,7 @@
 //
 // Unlike OBFS4, lampshade does not employ padding and instead relies on the
 // fact that TCP is a streaming protocol that doesn't preserve message
-// boundaries. In practive, for small messages, TCP does often preserve message
+// boundaries. In practice, for small messages, TCP does often preserve message
 // boundaries, so to thwart fingerprinting Lampshade coalesces consecutive small
 // writes into single larger messages when possible. This also improves
 // performance by reducing fixed overhead for things like TCP headers.
