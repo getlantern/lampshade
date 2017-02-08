@@ -9,7 +9,7 @@ import (
 
 // Dialer is like StreamDialer but provides a function that returns a net.Conn
 // for easier integration with code that needs this interface.
-func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
+func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
 	d := StreamDialer(windowSize, maxPadding, maxStreamsPerConn, pool, serverPublicKey, dial)
 	return func() (net.Conn, error) {
 		return d()
@@ -33,14 +33,14 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint32, pool Buffe
 // maxPadding - maximum random padding to use when necessary.
 //
 // maxStreamsPerConn - limits the number of streams per physical connection. If
-//                     <=0, defaults to max uint32.
+//                     <=0, defaults to max uint16.
 //
 // pool - BufferPool to use
 //
 // serverPublicKey - if provided, this dialer will use encryption.
 //
 // dial - function to open an underlying connection.
-func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint32, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
+func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}
@@ -59,11 +59,11 @@ type dialer struct {
 	doDial           func() (net.Conn, error)
 	windowSize       int
 	maxPadding       int
-	maxStreamPerConn uint32
+	maxStreamPerConn uint16
 	pool             BufferPool
 	serverPublicKey  *rsa.PublicKey
 	current          *session
-	id               uint32
+	id               uint16
 	mx               sync.Mutex
 }
 

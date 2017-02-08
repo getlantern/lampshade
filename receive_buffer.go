@@ -26,14 +26,9 @@ type receiveBuffer struct {
 	mx       sync.RWMutex
 }
 
-func newReceiveBuffer(streamID []byte, ack chan []byte, pool BufferPool, windowSize int) *receiveBuffer {
-	// Make an ackFrame for this stream id
-	ackFrame := make([]byte, len(streamID))
-	copy(ackFrame, streamID)
-	setFrameType(ackFrame, frameTypeACK)
-
+func newReceiveBuffer(defaultHeader []byte, ack chan []byte, pool BufferPool, windowSize int) *receiveBuffer {
 	return &receiveBuffer{
-		ackFrame: ackFrame,
+		ackFrame: withFrameType(defaultHeader, frameTypeACK),
 		in:       make(chan []byte, windowSize),
 		ack:      ack,
 		pool:     pool,
@@ -127,7 +122,7 @@ func (buf *receiveBuffer) onFrame(frame []byte) {
 		buf.pool.Put(buf.poolable[:maxFrameSize])
 	}
 	buf.poolable = frame
-	buf.current = frame[frameHeaderSize:]
+	buf.current = frame[fullHeaderSize:]
 	// immediately acknowledge that we've queued a frame
 	buf.ack <- buf.ackFrame
 }

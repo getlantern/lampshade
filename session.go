@@ -21,8 +21,8 @@ type session struct {
 	clientInitMsg []byte
 	pool          BufferPool
 	out           chan []byte
-	streams       map[uint32]*stream
-	closed        map[uint32]bool
+	streams       map[uint16]*stream
+	closed        map[uint16]bool
 	connCh        chan net.Conn
 	beforeClose   func(*session)
 	mx            sync.RWMutex
@@ -42,8 +42,8 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt cipher.
 		clientInitMsg: clientInitMsg,
 		pool:          pool,
 		out:           make(chan []byte),
-		streams:       make(map[uint32]*stream),
-		closed:        make(map[uint32]bool),
+		streams:       make(map[uint16]*stream),
+		closed:        make(map[uint16]bool),
 		connCh:        connCh,
 		beforeClose:   beforeClose,
 	}
@@ -55,42 +55,33 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt cipher.
 func (s *session) recvLoop() {
 	for {
 		b := s.pool.getForFrame()
-		// First read id
-		id := b[:idSize]
-		_, err := io.ReadFull(s, id)
+		// First read header
+		header := b[:headerSize]
+		_, err := io.ReadFull(s, header)
 		if err != nil {
-			s.onSessionError(fmt.Errorf("Unable to read id: %v", err), nil)
+			s.onSessionError(fmt.Errorf("Unable to read header: %v", err), nil)
 			return
 		}
 
+		frameType, id := frameTypeAndID(header)
 		isPadding := false
-		isACK := false
-		isRST := false
-		switch frameType(id) {
+		switch frameType {
 		case frameTypePadding:
 			isPadding = true
 		case frameTypeACK:
-			isACK = true
-		case frameTypeRST:
-			// Closing existing connection
-			isRST = true
-		}
-		setFrameType(id, frameTypeData)
-
-		_id := binaryEncoding.Uint32(id)
-		if isACK {
-			c, open := s.getOrCreateStream(_id)
+			c, open := s.getOrCreateStream(id)
 			if !open {
 				// Stream was already closed, ignore
 				continue
 			}
 			c.sb.ack <- true
 			continue
-		} else if isRST {
+		case frameTypeRST:
+			// Closing existing connection
 			s.mx.Lock()
-			c := s.streams[_id]
-			delete(s.streams, _id)
-			s.closed[_id] = true
+			c := s.streams[id]
+			delete(s.streams, id)
+			s.closed[id] = true
 			s.mx.Unlock()
 			if c != nil {
 				// Close, but don't send an RST back the other way since the other end is
@@ -101,7 +92,7 @@ func (s *session) recvLoop() {
 		}
 
 		// Read frame length
-		dataLength := b[idSize:frameHeaderSize]
+		dataLength := b[headerSize:fullHeaderSize]
 		_, err = io.ReadFull(s, dataLength)
 		if err != nil {
 			s.onSessionError(err, nil)
@@ -110,8 +101,8 @@ func (s *session) recvLoop() {
 
 		_dataLength := int(binaryEncoding.Uint16(dataLength))
 		// Read frame
-		b = b[:frameHeaderSize+_dataLength]
-		_, err = io.ReadFull(s, b[frameHeaderSize:])
+		b = b[:fullHeaderSize+_dataLength]
+		_, err = io.ReadFull(s, b[fullHeaderSize:])
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
@@ -122,7 +113,7 @@ func (s *session) recvLoop() {
 			continue
 		}
 
-		c, open := s.getOrCreateStream(_id)
+		c, open := s.getOrCreateStream(id)
 		if !open {
 			// Stream was already closed, ignore
 			continue
@@ -142,7 +133,7 @@ func (s *session) sendLoop() {
 	// pre-allocate empty buffer for random padding
 	// note - we can use an empty buffer because after encryption with AES in CTR
 	// mode it is effectively random anyway.
-	randomPadding := make([]byte, frameHeaderSize+int(s.maxPadding.Int64()))
+	randomPadding := make([]byte, fullHeaderSize+int(s.maxPadding.Int64()))
 	setFrameType(randomPadding, frameTypePadding)
 
 	coalesce := func(b []byte) {
@@ -152,13 +143,13 @@ func (s *session) sendLoop() {
 	}
 
 	bufferFrame := func(frame []byte) {
-		dataLen := len(frame) - idSize
+		dataLen := len(frame) - headerSize
 		if dataLen > MaxDataLen {
 			panic(fmt.Sprintf("Data length of %d exceeds maximum allowed of %d", dataLen, MaxDataLen))
 		}
-		id := frame[dataLen:]
-		coalesce(id)
-		if frameType(id) != frameTypeData {
+		header := frame[dataLen:]
+		coalesce(header)
+		if frameType(header) != frameTypeData {
 			// control message, no data
 			return
 		}
@@ -209,8 +200,8 @@ func (s *session) sendLoop() {
 			if log.IsTraceEnabled() {
 				log.Tracef("Adding random padding of length: %d", randLength.Int64())
 			}
-			binaryEncoding.PutUint16(randomPadding[idSize:], uint16(randLength.Int64()))
-			coalesce(randomPadding[:frameHeaderSize+int(randLength.Int64())])
+			binaryEncoding.PutUint16(randomPadding[headerSize:], uint16(randLength.Int64()))
+			coalesce(randomPadding[:fullHeaderSize+int(randLength.Int64())])
 		}
 
 		// Write coalesced data out
@@ -254,7 +245,7 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	}
 }
 
-func (s *session) getOrCreateStream(id uint32) (*stream, bool) {
+func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	s.mx.Lock()
 	c := s.streams[id]
 	if c != nil {
@@ -267,15 +258,13 @@ func (s *session) getOrCreateStream(id uint32) (*stream, bool) {
 		return nil, false
 	}
 
-	_id := make([]byte, idSize)
-	binaryEncoding.PutUint32(_id, id)
+	defaultHeader := newHeader(frameTypeData, id)
 	c = &stream{
 		Conn:    s,
-		id:      _id,
 		session: s,
 		pool:    s.pool,
-		rb:      newReceiveBuffer(_id, s.out, s.pool, s.windowSize),
-		sb:      newSendBuffer(_id, s.out, s.windowSize),
+		rb:      newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
+		sb:      newSendBuffer(defaultHeader, s.out, s.windowSize),
 	}
 	s.streams[id] = c
 	s.mx.Unlock()

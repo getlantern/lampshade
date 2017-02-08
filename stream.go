@@ -10,7 +10,6 @@ import (
 // managed by a session.
 type stream struct {
 	net.Conn
-	id            []byte
 	session       *session
 	pool          BufferPool
 	rb            *receiveBuffer

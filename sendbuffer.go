@@ -19,15 +19,15 @@ var (
 // the connection is closed. We handle this from sendBuffer so that we can
 // ensure buffered frames are sent before sending the RST.
 type sendBuffer struct {
-	streamID       []byte
+	defaultHeader  []byte
 	in             chan []byte
 	ack            chan bool
 	closeRequested chan bool
 }
 
-func newSendBuffer(streamID []byte, out chan []byte, windowSize int) *sendBuffer {
+func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendBuffer {
 	buf := &sendBuffer{
-		streamID:       streamID,
+		defaultHeader:  defaultHeader,
 		in:             make(chan []byte, windowSize),
 		ack:            make(chan bool, windowSize),
 		closeRequested: make(chan bool, 1),
@@ -67,7 +67,7 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 			select {
 			case frame, open := <-buf.in:
 				if frame != nil {
-					out <- append(frame, buf.streamID...)
+					out <- append(frame, buf.defaultHeader...)
 				}
 				if !open {
 					// We've closed
@@ -98,8 +98,5 @@ func (buf *sendBuffer) close(sendRST bool) {
 
 func (buf *sendBuffer) sendRST(out chan []byte) {
 	// Send an RST frame with the streamID
-	rst := make([]byte, len(buf.streamID))
-	copy(rst, buf.streamID)
-	setFrameType(rst, frameTypeRST)
-	out <- rst
+	out <- withFrameType(buf.defaultHeader, frameTypeRST)
 }

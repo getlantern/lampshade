@@ -10,13 +10,12 @@ import (
 )
 
 func TestSendBuffer(t *testing.T) {
-	id := make([]byte, idSize)
-	binaryEncoding.PutUint32(id, 27)
+	header := newHeader(frameTypeData, 27)
 
 	depth := 5
 
 	out := make(chan []byte)
-	buf := newSendBuffer(id, out, depth)
+	buf := newSendBuffer(header, out, depth)
 	defer buf.close(false)
 
 	var mx sync.RWMutex
@@ -24,7 +23,7 @@ func TestSendBuffer(t *testing.T) {
 	closed := false
 	go func() {
 		for b := range out {
-			if assert.EqualValues(t, id, b[1:]) {
+			if assert.EqualValues(t, header, b[1:]) {
 				mx.Lock()
 				wrote += string(b[:1])
 				mx.Unlock()

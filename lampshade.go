@@ -103,10 +103,10 @@
 //   +--------------+-----------+----------+--------+
 //   | Message Type | Stream ID | Data Len |  Data  |
 //   +--------------+-----------+----------+--------+
-//   |       1      |     3     |     2    | <=8192 |
+//   |      1       |     2     |     2    | <=8192 |
 //   +--------------+-----------+----------+--------+
 //
-//   Message Type - 1 byte, indicates the message type.
+//   Message Type - indicates the message type.
 //
 //  		0 = data
 //      1 = padding
@@ -150,14 +150,14 @@ const (
 	protocolVersion1 = 1
 
 	// framing
-	idSize          = 4
-	lenSize         = 2
-	frameHeaderSize = idSize + lenSize
+	headerSize     = 3
+	lenSize        = 2
+	fullHeaderSize = headerSize + lenSize
 
 	// MaxDataLen is the maximum length of data in a lampshade frame.
 	MaxDataLen = 8192
 
-	maxFrameSize = idSize + lenSize + MaxDataLen
+	maxFrameSize = fullHeaderSize + MaxDataLen
 
 	// frame types
 	frameTypeData    = 0
@@ -165,7 +165,7 @@ const (
 	frameTypeACK     = 2
 	frameTypeRST     = 3
 
-	maxID = (2 << 31) - 1
+	maxID = (2 << 15) - 1
 
 	coalesceThreshold = 1500 // basically this is the practical TCP MTU for anything traversing Ethernet
 )
@@ -251,10 +251,32 @@ func (p *bufferPool) Put(b []byte) {
 	p.pool.Put(b)
 }
 
-func frameType(b []byte) byte {
-	return b[0]
+func setFrameTypeAndID(header []byte, frameType byte, id uint16) {
+	header[0] = frameType
+	binaryEncoding.PutUint16(header[1:], id)
 }
 
-func setFrameType(b []byte, frameType byte) {
-	b[0] = frameType
+func newHeader(frameType byte, id uint16) []byte {
+	header := make([]byte, headerSize)
+	setFrameTypeAndID(header, frameType, id)
+	return header
+}
+
+func withFrameType(header []byte, frameType byte) []byte {
+	out := make([]byte, headerSize)
+	copy(out, header)
+	out[0] = frameType
+	return out
+}
+
+func frameTypeAndID(header []byte) (byte, uint16) {
+	return header[0], binaryEncoding.Uint16(header[1:])
+}
+
+func setFrameType(header []byte, frameType byte) {
+	header[0] = frameType
+}
+
+func frameType(header []byte) byte {
+	return header[0]
 }

@@ -103,10 +103,10 @@
 //   +--------------+-----------+----------+--------+
 //   | Message Type | Stream ID | Data Len |  Data  |
 //   +--------------+-----------+----------+--------+
-//   |       1      |     3     |     2    | <=8192 |
+//   |    4 bits    |  20 bits  |     2    | <=8192 |
 //   +--------------+-----------+----------+--------+
 //
-//   Message Type - 1 byte, indicates the message type.
+//   Message Type - indicates the message type.
 //
 //  		0 = data
 //      1 = padding

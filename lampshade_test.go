@@ -228,7 +228,7 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 
 func TestConnIDExhaustion(t *testing.T) {
 	max := 100
-	l, dial, _, err := echoServerAndDialer(uint32(max))
+	l, dial, _, err := echoServerAndDialer(uint16(max))
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -293,11 +293,11 @@ func doTestConnBasicFlow(t *testing.T, mux bool) {
 	wg.Wait()
 }
 
-func echoServerAndDialer(maxStreamsPerConn uint32) (net.Listener, func() (net.Conn, error), *sync.WaitGroup, error) {
+func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, func() (net.Conn, error), *sync.WaitGroup, error) {
 	return doEchoServerAndDialer(true, maxStreamsPerConn)
 }
 
-func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint32) (net.Listener, func() (net.Conn, error), *sync.WaitGroup, error) {
+func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint16) (net.Listener, func() (net.Conn, error), *sync.WaitGroup, error) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		return nil, nil, nil, err
