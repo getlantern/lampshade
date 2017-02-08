@@ -19,17 +19,17 @@ func TestInit(t *testing.T) {
 		return
 	}
 
-	windowSize := 5
-	msg, err := buildClientInitMsg(publicKey, windowSize, secret, sendIV, recvIV)
+	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, secret, sendIV, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	_windowSize, _secret, _sendIV, _recvIV, err := decodeClientInitMsg(privateKey, msg)
+	_windowSize, _maxPadding, _secret, _sendIV, _recvIV, err := decodeClientInitMsg(privateKey, msg)
 	if !assert.NoError(t, err) {
 		return
 	}
 	assert.Equal(t, windowSize, _windowSize)
+	assert.Equal(t, maxPadding, _maxPadding)
 	assert.EqualValues(t, secret, _secret)
 	assert.EqualValues(t, sendIV, _sendIV)
 	assert.EqualValues(t, recvIV, _recvIV)
