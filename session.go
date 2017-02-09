@@ -133,7 +133,8 @@ func (s *session) sendLoop() {
 	// pre-allocate empty buffer for random padding
 	// note - we can use an empty buffer because after encryption with AES in CTR
 	// mode it is effectively random anyway.
-	randomPadding := make([]byte, fullHeaderSize+int(s.maxPadding.Int64()))
+	maxPadding := int(s.maxPadding.Int64())
+	randomPadding := make([]byte, fullHeaderSize+maxPadding)
 	setFrameType(randomPadding, frameTypePadding)
 
 	coalesce := func(b []byte) {
@@ -190,7 +191,7 @@ func (s *session) sendLoop() {
 			log.Tracef("Coalesced %d for total of %d", coalesced, coalescedBytes)
 		}
 
-		if coalesced == 1 && coalescedBytes < coalesceThreshold {
+		if maxPadding > 0 && coalesced == 1 && coalescedBytes < coalesceThreshold {
 			// Add random padding whenever we failed to coalesce
 			randLength, randErr := rand.Int(rand.Reader, s.maxPadding)
 			if randErr != nil {
