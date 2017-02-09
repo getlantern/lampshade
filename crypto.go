@@ -36,6 +36,17 @@ func (c Cipher) ivSize() int {
 	}
 }
 
+func (c Cipher) String() string {
+	switch c {
+	case AES128CTR:
+		return "AES128_CTR"
+	case ChaCha20:
+		return "ChaCha20"
+	default:
+		return "unknown"
+	}
+}
+
 func newSecret(cipherCode Cipher) ([]byte, error) {
 	secret := make([]byte, cipherCode.secretSize())
 	_, err := rand.Read(secret)
