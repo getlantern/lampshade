@@ -91,15 +91,15 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("Unable to read client init msg: %v", err)
 	}
-	windowSize, maxPadding, secret, sendIV, recvIV, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
+	windowSize, maxPadding, cipherCode, secret, sendIV, recvIV, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
 		return fmt.Errorf("Unable to decode client init msg: %v", err)
 	}
-	decrypt, err := newAESCipher(secret, sendIV)
+	decrypt, err := newCipher(cipherCode, secret, sendIV)
 	if err != nil {
 		return fmt.Errorf("Unable to initialize decryption cipher: %v", err)
 	}
-	encrypt, err := newAESCipher(secret, recvIV)
+	encrypt, err := newCipher(cipherCode, secret, recvIV)
 	if err != nil {
 		return fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}

@@ -13,47 +13,64 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestInit(t *testing.T) {
-	privateKey, publicKey, secret, sendIV, recvIV, err := initCrypto()
+func TestInitAESCTR(t *testing.T) {
+	doTestInit(t, CipherAESCTR)
+}
+
+func TestInitChaCha20(t *testing.T) {
+	doTestInit(t, CipherChaCha20)
+}
+
+func doTestInit(t *testing.T, cipherCode Cipher) {
+	privateKey, publicKey, secret, sendIV, recvIV, err := initCrypto(cipherCode)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, secret, sendIV, recvIV)
+	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, cipherCode, secret, sendIV, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	_windowSize, _maxPadding, _secret, _sendIV, _recvIV, err := decodeClientInitMsg(privateKey, msg)
+	_windowSize, _maxPadding, _cipherCode, _secret, _sendIV, _recvIV, err := decodeClientInitMsg(privateKey, msg)
 	if !assert.NoError(t, err) {
 		return
 	}
 	assert.Equal(t, windowSize, _windowSize)
 	assert.Equal(t, maxPadding, _maxPadding)
+	assert.Equal(t, cipherCode, _cipherCode)
 	assert.EqualValues(t, secret, _secret)
 	assert.EqualValues(t, sendIV, _sendIV)
 	assert.EqualValues(t, recvIV, _recvIV)
 }
 
-func TestCryptoPrototype(t *testing.T) {
-	_, _, secret, sendIV, recvIV, err := initCrypto()
+func TestCryptoPrototypeAESCTR(t *testing.T) {
+	doTestCryptoPrototype(t, CipherAESCTR)
+}
+
+func TestCryptoPrototypeChaCha20(t *testing.T) {
+	doTestCryptoPrototype(t, CipherAESCTR)
+}
+
+func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
+	_, _, secret, sendIV, recvIV, err := initCrypto(cipherCode)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	clientEncrypt, err := newAESCipher(secret, sendIV)
+	clientEncrypt, err := newCipher(cipherCode, secret, sendIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	clientDecrypt, err := newAESCipher(secret, recvIV)
+	clientDecrypt, err := newCipher(cipherCode, secret, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	serverEncrypt, err := newAESCipher(secret, recvIV)
+	serverEncrypt, err := newCipher(cipherCode, secret, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	serverDecrypt, err := newAESCipher(secret, sendIV)
+	serverDecrypt, err := newCipher(cipherCode, secret, sendIV)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -74,23 +91,23 @@ func TestCryptoPrototype(t *testing.T) {
 	}
 }
 
-func initCrypto() (*rsa.PrivateKey, *rsa.PublicKey, []byte, []byte, []byte, error) {
+func initCrypto(cipherCode Cipher) (*rsa.PrivateKey, *rsa.PublicKey, []byte, []byte, []byte, error) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 
-	secret, err := newAESSecret()
+	secret, err := newSecret(cipherCode)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 
-	sendIV, err := newIV()
+	sendIV, err := newIV(cipherCode)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
 
-	recvIV, err := newIV()
+	recvIV, err := newIV(cipherCode)
 	if err != nil {
 		return nil, nil, nil, nil, nil, err
 	}
