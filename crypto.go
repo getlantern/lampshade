@@ -11,8 +11,33 @@ import (
 	"github.com/Yawning/chacha20"
 )
 
+// Cipher specifies a stream cipher
+type Cipher byte
+
+func (c Cipher) secretSize() int {
+	switch c {
+	case AES128CTR:
+		return 16
+	case ChaCha20:
+		return 32
+	default:
+		return 1
+	}
+}
+
+func (c Cipher) ivSize() int {
+	switch c {
+	case AES128CTR:
+		return 16
+	case ChaCha20:
+		return 12
+	default:
+		return 1
+	}
+}
+
 func newSecret(cipherCode Cipher) ([]byte, error) {
-	secret := make([]byte, secretSizes[cipherCode])
+	secret := make([]byte, cipherCode.secretSize())
 	_, err := rand.Read(secret)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to generate random AES secret: %v", err)
@@ -22,7 +47,7 @@ func newSecret(cipherCode Cipher) ([]byte, error) {
 }
 
 func newIV(cipherCode Cipher) ([]byte, error) {
-	iv := make([]byte, ivSizes[cipherCode])
+	iv := make([]byte, cipherCode.ivSize())
 	_, err := rand.Read(iv)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to generate random initialization vector: %v", err)
@@ -47,8 +72,8 @@ func newCipher(cipherCode Cipher, secret []byte, iv []byte) (cipher.Stream, erro
 }
 
 func buildClientInitMsg(serverPublicKey *rsa.PublicKey, windowSize int, maxPadding int, cipherCode Cipher, secret []byte, sendIV []byte, recvIV []byte) ([]byte, error) {
-	secretSize := secretSizes[cipherCode]
-	ivSize := ivSizes[cipherCode]
+	secretSize := cipherCode.secretSize()
+	ivSize := cipherCode.ivSize()
 	plainText := make([]byte, 0, winSize+secretSize+ivSize*2)
 	plainText = append(plainText, byte(windowSize))
 	plainText = append(plainText, byte(maxPadding))
@@ -74,8 +99,8 @@ func decodeClientInitMsg(serverPrivateKey *rsa.PrivateKey, msg []byte) (windowSi
 	maxPadding = int(_maxPadding[0])
 	_cipherCode, pt := consume(pt, 1)
 	cipherCode = Cipher(_cipherCode[0])
-	secretSize := secretSizes[cipherCode]
-	ivSize := ivSizes[cipherCode]
+	secretSize := cipherCode.secretSize()
+	ivSize := cipherCode.ivSize()
 	secret, pt = consume(pt, secretSize)
 	sendIV, pt = consume(pt, ivSize)
 	recvIV, _ = consume(pt, ivSize)

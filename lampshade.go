@@ -140,8 +140,6 @@ import (
 	"github.com/oxtoacart/bpool"
 )
 
-type Cipher byte
-
 const (
 	// client init message
 	clientInitSize = 256
@@ -179,16 +177,6 @@ const (
 
 var (
 	log = golog.LoggerFor("lampshade")
-
-	secretSizes = map[Cipher]int{
-		AES128CTR: 16,
-		ChaCha20:  32,
-	}
-
-	ivSizes = map[Cipher]int{
-		AES128CTR: 16,
-		ChaCha20:  12,
-	}
 
 	ErrTimeout          = &netError{"i/o timeout", true, true}
 	ErrConnectionClosed = &netError{"connection closed", false, false}
