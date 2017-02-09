@@ -9,8 +9,8 @@ import (
 
 // Dialer is like StreamDialer but provides a function that returns a net.Conn
 // for easier integration with code that needs this interface.
-func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
-	d := StreamDialer(windowSize, maxPadding, maxStreamsPerConn, pool, serverPublicKey, dial)
+func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
+	d := StreamDialer(windowSize, maxPadding, maxStreamsPerConn, pool, cipherCode, serverPublicKey, dial)
 	return func() (net.Conn, error) {
 		return d()
 	}
@@ -37,10 +37,12 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 //
 // pool - BufferPool to use
 //
+// cipherCode - which cipher to use, 1 = AES128 in CTR mode, 2 = ChaCha20
+//
 // serverPublicKey - if provided, this dialer will use encryption.
 //
 // dial - function to open an underlying connection.
-func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
+func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}
@@ -50,6 +52,7 @@ func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool
 		maxPadding:       maxPadding,
 		maxStreamPerConn: maxStreamsPerConn,
 		pool:             pool,
+		cipherCode:       cipherCode,
 		serverPublicKey:  serverPublicKey,
 	}
 	return d.dial
@@ -61,6 +64,7 @@ type dialer struct {
 	maxPadding       int
 	maxStreamPerConn uint16
 	pool             BufferPool
+	cipherCode       Cipher
 	serverPublicKey  *rsa.PublicKey
 	current          *session
 	id               uint16
@@ -101,34 +105,34 @@ func (d *dialer) startSession() (*session, error) {
 	}
 
 	// Each session gets a new secret
-	secret, err := newAESSecret()
+	secret, err := newSecret(d.cipherCode)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create AES secret: %v", err)
 	}
 
 	// Create initialization vector for sending to server
-	sendIV, err := newIV()
+	sendIV, err := newIV(d.cipherCode)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create send initialization vector: %v", err)
 	}
 
 	// Create initialization vector for receiving from server
-	recvIV, err := newIV()
+	recvIV, err := newIV(d.cipherCode)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create recv initialization vector: %v", err)
 	}
 
 	// Generate the client init message
-	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, secret, sendIV, recvIV)
+	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, d.cipherCode, secret, sendIV, recvIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	decrypt, err := newAESCipher(secret, recvIV)
+	decrypt, err := newCipher(d.cipherCode, secret, recvIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to initialize decryption cipher: %v", err)
 	}
-	encrypt, err := newAESCipher(secret, sendIV)
+	encrypt, err := newCipher(d.cipherCode, secret, sendIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}

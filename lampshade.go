@@ -75,11 +75,11 @@
 //   To initialize a session, the client sends the following, encrypted using
 //   RSA OAEP using the server's PK
 //
-//     +---------+-----+---------+--------+---------+---------+
-//     | Version | Win | Max Pad | Secret | Send IV | Recv IV |
-//     +---------+-----+---------+--------+---------+---------+
-//     |    1    |  1  |    1    |   16   |   16    |   16    |
-//     +---------+-----+---------+--------+---------+---------+
+//     +---------+-----+---------+--------+--------+---------+---------+
+//     | Version | Win | Max Pad | Cipher | Secret | Send IV | Recv IV |
+//     +---------+-----+---------+--------+--------+---------+---------+
+//     |    1    |  1  |    1    |    1   | 16/32  |  16/12  |  16/12  |
+//     +---------+-----+---------+--------+--------+---------+---------+
 //
 //       Version - the version of the protocol (currently 1)
 //
@@ -87,13 +87,15 @@
 //
 //       Max Pad - maximum random padding
 //
-//       Secret - 128 bits of secret for AES128
+//       Cipher - 1 = AES128_CTR or 2 = ChaCha20
 //
-//       Send IV - 128 bits of initialization vector for CTR mode on AES128 for
-//                 messages from client -> server
+//       Secret - 128 bits of secret for AES128_CTR, 256 bits for ChaCha20
 //
-//       Recv IV - 128 bits of initialization vector for CTR mode on AES128 for
-//                 messages from server -> client
+//       Send IV - initialization vector for messages from client -> server,
+//                 128 bits for AES_CTR, 96 bits for ChaCha20
+//
+//       Recv IV - initialization vector for messages from server -> client,
+//                 128 bits for AES_CTR, 96 bits for ChaCha20
 //
 // Framing:
 //
@@ -138,16 +140,21 @@ import (
 	"github.com/oxtoacart/bpool"
 )
 
+type Cipher byte
+
 const (
 	// client init message
 	clientInitSize = 256
 	versionSize    = 1
 	winSize        = 1
 	maxPaddingSize = 1
-	secretSize     = 16
-	ivSize         = 16
 
 	protocolVersion1 = 1
+
+	// CipherAESCTR is 128-bit AES in CTR mode
+	CipherAESCTR = 1
+	// CipherChaCha20 is 256-bit ChaCha20 with a 96-bit Nonce
+	CipherChaCha20 = 2
 
 	// framing
 	headerSize     = 3
@@ -172,6 +179,16 @@ const (
 
 var (
 	log = golog.LoggerFor("lampshade")
+
+	secretSizes = map[Cipher]int{
+		CipherAESCTR:   16,
+		CipherChaCha20: 32,
+	}
+
+	ivSizes = map[Cipher]int{
+		CipherAESCTR:   16,
+		CipherChaCha20: 12,
+	}
 
 	ErrTimeout          = &netError{"i/o timeout", true, true}
 	ErrConnectionClosed = &netError{"connection closed", false, false}
