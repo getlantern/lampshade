@@ -151,10 +151,10 @@ const (
 
 	protocolVersion1 = 1
 
-	// CipherAESCTR is 128-bit AES in CTR mode
-	CipherAESCTR = 1
-	// CipherChaCha20 is 256-bit ChaCha20 with a 96-bit Nonce
-	CipherChaCha20 = 2
+	// AES128CTR is 128-bit AES in CTR mode
+	AES128CTR = 1
+	// ChaCha20 is 256-bit ChaCha20 with a 96-bit Nonce
+	ChaCha20 = 2
 
 	// framing
 	headerSize     = 3
@@ -181,13 +181,13 @@ var (
 	log = golog.LoggerFor("lampshade")
 
 	secretSizes = map[Cipher]int{
-		CipherAESCTR:   16,
-		CipherChaCha20: 32,
+		AES128CTR: 16,
+		ChaCha20:  32,
 	}
 
 	ivSizes = map[Cipher]int{
-		CipherAESCTR:   16,
-		CipherChaCha20: 12,
+		AES128CTR: 16,
+		ChaCha20:  12,
 	}
 
 	ErrTimeout          = &netError{"i/o timeout", true, true}

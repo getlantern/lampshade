@@ -371,7 +371,7 @@ func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint16) (net.Listener, fu
 	}
 
 	if mux {
-		dialer = Dialer(windowSize, maxPadding, maxStreamsPerConn, pool, CipherAESCTR, &pk.RSA().PublicKey, dialer)
+		dialer = Dialer(windowSize, maxPadding, maxStreamsPerConn, pool, AES128CTR, &pk.RSA().PublicKey, dialer)
 	}
 
 	return l, dialer, &wg, nil
@@ -404,7 +404,7 @@ func TestConcurrency(t *testing.T) {
 		}
 	}()
 
-	dial := Dialer(windowSize, maxPadding, 0, NewBufferPool(100), CipherChaCha20, &pk.RSA().PublicKey, func() (net.Conn, error) {
+	dial := Dialer(windowSize, maxPadding, 0, NewBufferPool(100), ChaCha20, &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})
 
@@ -463,7 +463,7 @@ func BenchmarkConnMux(b *testing.B) {
 	}
 	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA())
 
-	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), CipherAESCTR, &pk.RSA().PublicKey, func() (net.Conn, error) {
+	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), AES128CTR, &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})()
 	if err != nil {

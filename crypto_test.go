@@ -14,11 +14,11 @@ import (
 )
 
 func TestInitAESCTR(t *testing.T) {
-	doTestInit(t, CipherAESCTR)
+	doTestInit(t, AES128CTR)
 }
 
 func TestInitChaCha20(t *testing.T) {
-	doTestInit(t, CipherChaCha20)
+	doTestInit(t, ChaCha20)
 }
 
 func doTestInit(t *testing.T, cipherCode Cipher) {
@@ -45,11 +45,11 @@ func doTestInit(t *testing.T, cipherCode Cipher) {
 }
 
 func TestCryptoPrototypeAESCTR(t *testing.T) {
-	doTestCryptoPrototype(t, CipherAESCTR)
+	doTestCryptoPrototype(t, AES128CTR)
 }
 
 func TestCryptoPrototypeChaCha20(t *testing.T) {
-	doTestCryptoPrototype(t, CipherAESCTR)
+	doTestCryptoPrototype(t, AES128CTR)
 }
 
 func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {

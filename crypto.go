@@ -33,13 +33,13 @@ func newIV(cipherCode Cipher) ([]byte, error) {
 
 func newCipher(cipherCode Cipher, secret []byte, iv []byte) (cipher.Stream, error) {
 	switch cipherCode {
-	case CipherAESCTR:
+	case AES128CTR:
 		block, err := aes.NewCipher(secret)
 		if err != nil {
 			return nil, fmt.Errorf("Unable to generate client AES cipher: %v", err)
 		}
 		return cipher.NewCTR(block, iv), nil
-	case CipherChaCha20:
+	case ChaCha20:
 		return chacha20.NewCipher(secret, iv)
 	default:
 		return nil, fmt.Errorf("Unknown cipher: %d", cipherCode)
