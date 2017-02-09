@@ -65,15 +65,14 @@
 //     random stream of bytes, following the OBFS4 threat model -
 //     https://github.com/Yawning/obfs4/blob/master/doc/obfs4-spec.txt#L35
 //
-//  - all numeric fields are unsigned integers in BigEndian format
+//   - all numeric fields are unsigned integers in BigEndian format
 //
 // Client Init Message
 //
-//   - 256 bytes
-//   - combined with first data message to vary size
+//   256 bytes, always combined with first data message to vary size.
 //
-//   To initialize a session, the client sends the following, encrypted using
-//   RSA OAEP using the server's PK
+//   To initialize a session, the client sends the below, encrypted using
+//   RSA OAEP using the server's PK:
 //
 //     +---------+-----+---------+--------+--------+---------+---------+
 //     | Version | Win | Max Pad | Cipher | Secret | Send IV | Recv IV |
@@ -83,13 +82,13 @@
 //
 //       Version - the version of the protocol (currently 1)
 //
-//       Win - transmit window size
+//       Win -     transmit window size
 //
 //       Max Pad - maximum random padding
 //
-//       Cipher - 1 = AES128_CTR or 2 = ChaCha20
+//       Cipher -  1 = AES128_CTR or 2 = ChaCha20
 //
-//       Secret - 128 bits of secret for AES128_CTR, 256 bits for ChaCha20
+//       Secret -  128 bits of secret for AES128_CTR, 256 bits for ChaCha20
 //
 //       Send IV - initialization vector for messages from client -> server,
 //                 128 bits for AES_CTR, 96 bits for ChaCha20
@@ -99,8 +98,8 @@
 //
 // Framing:
 //
-//   - all frames are encrypted with AES128 in CTR mode, using the secret and
-//     IV sent in the Init Session message
+//   All frames are encrypted with AES128 in CTR mode, using the secret and IV
+//   sent in the Init Session message.
 //
 //   +--------------+-----------+----------+--------+
 //   | Message Type | Stream ID | Data Len |  Data  |
@@ -110,10 +109,10 @@
 //
 //   Message Type - indicates the message type.
 //
-//  		0 = data
+//      0 = data
 //      1 = padding
 //      2 = ack
-//	  	3 = rst (close connection)
+//      3 = rst (close connection)
 //
 //   Stream ID - unique identifier for stream. (last field for ack and rst)
 //
@@ -126,8 +125,8 @@
 //   - used only when there weren't enough pending writes to coalesce
 //   - size varies randomly based on max pad parameter in init message
 //   - looks just like a standard frame, with empty data
-//   - the "empty" data actually looks random on the wire since we encrypt with
-//     AES in CTR mode
+//   - the "empty" data actually looks random on the wire since it's being
+//     encrypted with a stream cipher.
 //
 package lampshade
 
