@@ -82,13 +82,13 @@
 //
 //       Version - the version of the protocol (currently 1)
 //
-//       Win -     transmit window size
+//       Win     - transmit window size
 //
 //       Max Pad - maximum random padding
 //
-//       Cipher -  1 = AES128_CTR or 2 = ChaCha20
+//       Cipher  - 1 = AES128_CTR or 2 = ChaCha20
 //
-//       Secret -  128 bits of secret for AES128_CTR, 256 bits for ChaCha20
+//       Secret  - 128 bits of secret for AES128_CTR, 256 bits for ChaCha20
 //
 //       Send IV - initialization vector for messages from client -> server,
 //                 128 bits for AES_CTR, 96 bits for ChaCha20
@@ -178,10 +178,17 @@ const (
 var (
 	log = golog.LoggerFor("lampshade")
 
-	ErrTimeout          = &netError{"i/o timeout", true, true}
+	// ErrTimeout indicates that an i/o operation timed out.
+	ErrTimeout = &netError{"i/o timeout", true, true}
+	// ErrConnectionClosed indicates that an i/o operation was attempted on a
+	// closed stream.
 	ErrConnectionClosed = &netError{"connection closed", false, false}
-	ErrBrokenPipe       = &netError{"broken pipe", false, false}
-	ErrListenerClosed   = &netError{"listener closed", false, false}
+	// ErrBrokenPipe indicates that an i/o operation was attempted on session
+	// whose underlying connection isn't working anymore.
+	ErrBrokenPipe = &netError{"broken pipe", false, false}
+	// ErrListenerClosed indicates that an Accept was attempted on a closed
+	// listener.
+	ErrListenerClosed = &netError{"listener closed", false, false}
 
 	binaryEncoding = binary.BigEndian
 
