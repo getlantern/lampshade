@@ -27,8 +27,7 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 // returns the underlying dial error.
 //
 // windowSize - how many frames to queue, used to bound memory use. Each frame
-// takes about 8KB of memory. 25 is a good default, 50 yields higher throughput,
-// more than 50 hasn't been seen to have much of an effect.
+// takes about 8KB of memory. If <= 0, defaults to 50.
 //
 // maxPadding - maximum random padding to use when necessary.
 //
@@ -43,6 +42,9 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 //
 // dial - function to open an underlying connection.
 func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
+	if windowSize <= 0 {
+		windowSize = defaultWindowSize
+	}
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}

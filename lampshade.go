@@ -170,7 +170,8 @@ const (
 	frameTypeACK     = 2
 	frameTypeRST     = 3
 
-	maxID = (2 << 15) - 1
+	defaultWindowSize = 50
+	maxID             = (2 << 15) - 1
 
 	coalesceThreshold = 1500 // basically this is the practical TCP MTU for anything traversing Ethernet
 )
