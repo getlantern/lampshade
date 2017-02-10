@@ -1,16 +1,16 @@
 package lampshade
 
 import (
-	"crypto/hmac"
-	"crypto/md5"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/rand"
 	"crypto/rsa"
-	"crypto/sha256"
 	"testing"
 
-	"github.com/codahale/blake2"
+	"github.com/Yawning/chacha20"
 	"github.com/getlantern/keyman"
 	"github.com/stretchr/testify/assert"
+	"golang.org/x/crypto/chacha20poly1305"
 )
 
 func TestInitAESCTR(t *testing.T) {
@@ -115,61 +115,91 @@ func initCrypto(cipherCode Cipher) (*rsa.PrivateKey, *rsa.PublicKey, []byte, []b
 	return pk.RSA(), &pk.RSA().PublicKey, secret, sendIV, recvIV, nil
 }
 
-func BenchmarkHMACMD5(b *testing.B) {
-	secret := make([]byte, 16)
-	rand.Read(secret)
+func BenchmarkCipherAES128_CTR(b *testing.B) {
+	key := make([]byte, 16)
+	rand.Read(key)
+	iv := make([]byte, 16)
+	rand.Read(iv)
 	data := make([]byte, 8192)
 	rand.Read(data)
-	mac := hmac.New(md5.New, secret)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		b.Fatal(err)
+	}
+	encrypt := cipher.NewCTR(block, iv)
+	decrypt := cipher.NewCTR(block, iv)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mac.Write(data)
-		mac.Sum(nil)
-		mac.Reset()
+		encrypt.XORKeyStream(data, data)
+		decrypt.XORKeyStream(data, data)
 	}
 }
 
-func BenchmarkHMACSHA256(b *testing.B) {
-	secret := make([]byte, 32)
-	rand.Read(secret)
+func BenchmarkCipherChaCha20(b *testing.B) {
+	key := make([]byte, chacha20.KeySize)
+	rand.Read(key)
+	iv := make([]byte, chacha20.NonceSize)
+	rand.Read(iv)
 	data := make([]byte, 8192)
+	buf := make([]byte, 8192)
 	rand.Read(data)
-	mac := hmac.New(sha256.New, secret)
+	encrypt, err := chacha20.NewCipher(key, iv)
+	if err != nil {
+		b.Fatal(err)
+	}
+	decrypt, err := chacha20.NewCipher(key, iv)
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mac.Write(data)
-		mac.Sum(nil)
-		mac.Reset()
+		encrypt.XORKeyStream(buf, data)
+		decrypt.XORKeyStream(data, buf)
 	}
 }
 
-func BenchmarkHMACBlake2b512(b *testing.B) {
-	secret := make([]byte, 64)
-	rand.Read(secret)
+func BenchmarkCipherAES128_GCM(b *testing.B) {
+	key := make([]byte, 16)
+	rand.Read(key)
+	iv := make([]byte, 16)
+	rand.Read(iv)
 	data := make([]byte, 8192)
+	out := make([]byte, 10240)
 	rand.Read(data)
-	mac := hmac.New(blake2.NewBlake2B, secret)
+	block, err := aes.NewCipher(key)
+	if err != nil {
+		b.Fatal(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		b.Fatal(err)
+	}
+	nonce := make([]byte, 12)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mac.Write(data)
-		mac.Sum(nil)
-		mac.Reset()
+		binaryEncoding.PutUint32(nonce, uint32(i))
+		cipherText := aead.Seal(out[:0], nonce, data, nil)
+		aead.Open(out[:0], nonce, cipherText, nil)
 	}
 }
 
-func BenchmarkHMACBlake2b256(b *testing.B) {
-	secret := make([]byte, 32)
-	rand.Read(secret)
+func BenchmarkCipherChaCha20Poly1305(b *testing.B) {
+	key := make([]byte, chacha20poly1305.KeySize)
+	rand.Read(key)
+	iv := make([]byte, chacha20poly1305.NonceSize)
+	rand.Read(iv)
 	data := make([]byte, 8192)
+	out := make([]byte, 10240)
 	rand.Read(data)
-	mac := blake2.New(&blake2.Config{
-		Size: 32,
-		Key:  secret,
-	})
+	aead, err := chacha20poly1305.New(key)
+	if err != nil {
+		b.Fatal(err)
+	}
+	nonce := make([]byte, chacha20poly1305.NonceSize)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		mac.Write(data)
-		mac.Sum(nil)
-		mac.Reset()
+		binaryEncoding.PutUint32(nonce, uint32(i))
+		cipherText := aead.Seal(out[:0], nonce, data, nil)
+		aead.Open(out[:0], nonce, cipherText, nil)
 	}
 }
