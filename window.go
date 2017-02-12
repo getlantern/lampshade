@@ -2,11 +2,10 @@ package lampshade
 
 import (
 	"sync"
-	"time"
 )
 
 var (
-	immediate chan bool
+	immediate = make(chan bool)
 )
 
 func init() {
@@ -46,38 +45,18 @@ func (w *window) add(delta int) {
 	}
 }
 
-// sub subtracts from the window and blocks until the window is large enough to
-// subtract the given delta while still leaving a non-zero window size.
-func (w *window) sub(delta int, deadline time.Time) error {
+// sub subtracts from the window and returns a channel that blocks until the
+// window is large enough to subtract the given delta while still leaving a
+// non-zero window size.
+func (w *window) sub(delta int) chan bool {
 	w.mx.Lock()
 	w.size -= delta
 	isNegative := w.size < 0
 	w.mx.Unlock()
 	if !isNegative {
-		return nil
+		return immediate
 	}
-
-	// window negative, need to wait for it to become positive again
-	if deadline.IsZero() {
-		// block indefinitely
-		<-w.positiveAgain
-		return nil
-	}
-	now := time.Now()
-	if deadline.Before(now) {
-		// already passed deadline
-		return w.timedOut(delta)
-	}
-	// block until deadline
-	t := time.NewTimer(deadline.Sub(now))
-	select {
-	case <-w.positiveAgain:
-		t.Stop()
-		return nil
-	case <-t.C:
-		t.Stop()
-		return w.timedOut(delta)
-	}
+	return w.positiveAgain
 }
 
 func (w *window) timedOut(delta int) error {

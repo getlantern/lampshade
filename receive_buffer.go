@@ -60,17 +60,13 @@ func (buf *receiveBuffer) submit(frame []byte) {
 // As long as some data was already queued, read will not wait for more data
 // even if b has not yet been filled.
 func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err error) {
-	log.Debug("Reading")
-	defer log.Debugf("Read %d", totalN)
 	for {
 		n := copy(b, buf.current)
 		buf.current = buf.current[n:]
 		totalN += n
 		buf.unacked += n
 		if buf.unacked > buf.ackInterval {
-			log.Debugf("Sending ACK: %d", buf.unacked)
 			buf.ack <- ackWithBytes(buf.defaultHeader, int32(buf.unacked))
-			log.Debugf("Sent ACK: %d", buf.unacked)
 			buf.unacked = 0
 		}
 		if n == len(b) {

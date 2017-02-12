@@ -11,11 +11,9 @@ import (
 type stream struct {
 	net.Conn
 	session       *session
-	window        *window
-	defaultHeader []byte
+	pool          BufferPool
 	rb            *receiveBuffer
-	pendingWrite  chan []byte
-	writeResponse chan error
+	sb            *sendBuffer
 	readDeadline  time.Time
 	writeDeadline time.Time
 	closed        bool
@@ -36,41 +34,34 @@ func (c *stream) Read(b []byte) (int, error) {
 }
 
 func (c *stream) Write(b []byte) (int, error) {
+	if len(b) > MaxDataLen {
+		return c.writeChunks(b)
+	}
+
 	c.mx.RLock()
 	closed := c.closed
 	writeDeadline := c.writeDeadline
 	finalWriteErr := c.finalWriteErr
+	c.mx.RUnlock()
 	if finalWriteErr != nil {
-		c.mx.RUnlock()
 		return 0, finalWriteErr
 	}
 	if closed {
-		c.mx.RUnlock()
-		return 0, ErrConnectionClosed
-	}
-
-	// Wait for transmit window availability
-	log.Debugf("Waiting for %d", len(b))
-	err := c.window.sub(len(b), writeDeadline)
-	log.Debug("Available!")
-	if err != nil {
-		c.mx.RUnlock()
-		return 0, err
-	}
-
-	result := func(err error) (int, error) {
-		c.mx.RUnlock()
-		if err != nil {
-			return 0, err
-		}
+		// Make it look like the write worked even though we're not going to send it
+		// anywhere (TODO, might be better way to handle this?)
 		return len(b), nil
 	}
 
+	// copy buffer since we hang on to it past the call to Write but callers
+	// expect that they can reuse the buffer after Write returns
+	_b := b
+	b = c.pool.getForFrame()[:len(b)]
+	copy(b, _b)
+
 	if writeDeadline.IsZero() {
 		// Don't bother implementing a timeout
-		c.pendingWrite <- append(b, c.defaultHeader...)
-		err := <-c.writeResponse
-		return result(err)
+		c.sb.in <- b
+		return len(b), nil
 	}
 
 	now := time.Now()
@@ -78,22 +69,32 @@ func (c *stream) Write(b []byte) (int, error) {
 		return 0, ErrTimeout
 	}
 	timer := time.NewTimer(writeDeadline.Sub(now))
-
-	stopTimerResult := func(err error) (int, error) {
-		timer.Stop()
-		return result(err)
-	}
-
 	select {
-	case c.pendingWrite <- b:
-		select {
-		case err := <-c.writeResponse:
-			return stopTimerResult(err)
-		case <-timer.C:
-			return stopTimerResult(ErrTimeout)
-		}
+	case c.sb.in <- b:
+		timer.Stop()
+		return len(b), nil
 	case <-timer.C:
-		return stopTimerResult(ErrTimeout)
+		timer.Stop()
+		return 0, ErrTimeout
+	}
+}
+
+// writeChunks breaks the buffer down into units smaller than MaxDataLen in size
+func (c *stream) writeChunks(b []byte) (int, error) {
+	totalN := 0
+	for {
+		toWrite := b
+		last := true
+		if len(b) > MaxDataLen {
+			toWrite = b[:MaxDataLen]
+			b = b[MaxDataLen:]
+			last = false
+		}
+		n, err := c.Write(toWrite)
+		totalN += n
+		if last || err != nil {
+			return totalN, err
+		}
 	}
 }
 
@@ -113,8 +114,7 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 	c.mx.Unlock()
 	if didClose {
 		c.rb.close()
-		c.window.close()
-		// TODO: handle sending RST
+		c.sb.close(sendRST)
 	}
 	return nil
 }

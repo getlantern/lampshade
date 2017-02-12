@@ -81,8 +81,7 @@ func (s *session) recvLoop() {
 				return
 			}
 			ackedBytes := int(int32(binaryEncoding.Uint32(_ackedBytes)))
-			log.Debugf("Got ack: %d", ackedBytes)
-			c.window.add(ackedBytes)
+			c.sb.window.add(ackedBytes)
 			continue
 		case frameTypeRST:
 			// Closing existing connection
@@ -276,11 +275,11 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 
 	defaultHeader := newHeader(frameTypeData, id)
 	c = &stream{
-		Conn:         s,
-		session:      s,
-		window:       newWindow(s.windowSize),
-		rb:           newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
-		pendingWrite: s.out,
+		Conn:    s,
+		session: s,
+		pool:    s.pool,
+		sb:      newSendBuffer(defaultHeader, s.out, s.windowSize),
+		rb:      newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
 	}
 	s.streams[id] = c
 	s.mx.Unlock()

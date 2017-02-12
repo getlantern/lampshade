@@ -86,7 +86,9 @@ func buildClientInitMsg(serverPublicKey *rsa.PublicKey, windowSize int, maxPaddi
 	secretSize := cipherCode.secretSize()
 	ivSize := cipherCode.ivSize()
 	plainText := make([]byte, 0, winSize+secretSize+ivSize*2)
-	plainText = append(plainText, byte(windowSize))
+	_windowSize := make([]byte, winSize)
+	binaryEncoding.PutUint32(_windowSize, uint32(windowSize))
+	plainText = append(plainText, _windowSize...)
 	plainText = append(plainText, byte(maxPadding))
 	plainText = append(plainText, byte(cipherCode))
 	plainText = append(plainText, secret...)
@@ -104,8 +106,8 @@ func decodeClientInitMsg(serverPrivateKey *rsa.PrivateKey, msg []byte) (windowSi
 	if err != nil {
 		return 0, 0, 0, nil, nil, nil, fmt.Errorf("Unable to decrypt init message: %v", err)
 	}
-	_windowSize, pt := consume(pt, 1)
-	windowSize = int(_windowSize[0])
+	_windowSize, pt := consume(pt, winSize)
+	windowSize = int(binaryEncoding.Uint32(_windowSize))
 	_maxPadding, pt := consume(pt, 1)
 	maxPadding = int(_maxPadding[0])
 	_cipherCode, pt := consume(pt, 1)

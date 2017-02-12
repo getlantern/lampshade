@@ -2,7 +2,6 @@ package lampshade
 
 import (
 	"fmt"
-	"sync"
 	"testing"
 	"time"
 
@@ -16,60 +15,43 @@ func TestSendBuffer(t *testing.T) {
 
 	out := make(chan []byte)
 	buf := newSendBuffer(header, out, depth)
-	defer buf.close(false)
 
-	var mx sync.RWMutex
-	wrote := ""
-	closed := false
+	// write loop
 	go func() {
-		for b := range out {
-			if assert.EqualValues(t, header, b[1:]) {
-				mx.Lock()
-				wrote += string(b[:1])
-				mx.Unlock()
-			}
+		defer buf.close(false)
+		for i := 0; i < 10; i++ {
+			buf.in <- []byte(fmt.Sprint(i))
 		}
-		mx.Lock()
-		closed = true
-		mx.Unlock()
 	}()
 
-	// Should be able to write to twice depth with no problem
-	for i := 0; i < 2*depth; i++ {
-		buf.in <- []byte(fmt.Sprint(i))
-	}
-
-	// Writing past depth should fail
-	select {
-	case buf.in <- []byte("fail"):
-		assert.Fail(t, "Writing past buffer depth should have failed")
-		return
-	default:
-		// good
-	}
-
-	time.Sleep(25 * time.Millisecond)
 	// Make sure we got correct stuff
-	mx.RLock()
-	_wrote := wrote
-	mx.RUnlock()
-	assert.Equal(t, "01234", string(_wrote))
-
-	// Make sure we can ack up to depth
-	for i := 0; i < depth; i++ {
+	wrote := ""
+loop:
+	for {
 		select {
-		case buf.ack <- true:
-			// good
-		default:
-			assert.Fail(t, "Failed to ack to buffer on iteration %d", i)
-			return
+		case b := <-out:
+			if assert.EqualValues(t, header, b[1:]) {
+				wrote += string(b[:1])
+			}
+		case <-time.After(25 * time.Millisecond):
+			break loop
 		}
 	}
+	assert.Equal(t, "01234", string(wrote))
 
-	time.Sleep(25 * time.Millisecond)
-	// Make sure we got correct stuff after additional acks
-	mx.RLock()
-	_wrote = wrote
-	mx.RUnlock()
-	assert.Equal(t, "0123456789", string(_wrote))
+	// Simulate ACK
+	buf.window.add(depth)
+	// Make sure we got correct stuff
+loop2:
+	for {
+		select {
+		case b := <-out:
+			if assert.EqualValues(t, header, b[1:]) {
+				wrote += string(b[:1])
+			}
+		case <-time.After(25 * time.Millisecond):
+			break loop2
+		}
+	}
+	assert.Equal(t, "0123456789", string(wrote))
 }

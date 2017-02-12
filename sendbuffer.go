@@ -22,7 +22,6 @@ type sendBuffer struct {
 	defaultHeader  []byte
 	window         *window
 	in             chan []byte
-	ack            chan bool
 	closeRequested chan bool
 }
 
@@ -31,7 +30,6 @@ func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendB
 		defaultHeader:  defaultHeader,
 		window:         newWindow(windowSize),
 		in:             make(chan []byte, windowSize), // TODO make this smaller
-		ack:            make(chan bool, windowSize),   // TODO make this smaller
 		closeRequested: make(chan bool, 1),
 	}
 	go buf.sendLoop(out)
@@ -57,22 +55,31 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 		closeTimer.Reset(closeTimeout)
 	}
 
-	// Send one frame for every ack
 	for {
 		select {
-		case <-buf.ack:
-			// Grab next frame
-			select {
-			case frame, open := <-buf.in:
-				if frame != nil {
+		case frame, open := <-buf.in:
+			if frame != nil {
+				windowAvailable := buf.window.sub(len(frame))
+				select {
+				case <-windowAvailable:
+					// send allowed
 					out <- append(frame, buf.defaultHeader...)
+				case sendRST = <-buf.closeRequested:
+					// close requested before window available
+					signalClose()
+					select {
+					case <-windowAvailable:
+						// send allowed
+						out <- append(frame, buf.defaultHeader...)
+					case <-closeTimer.C:
+						// closed before window available
+						return
+					}
 				}
-				if !open {
-					// We've closed
-					return
-				}
-			case sendRST = <-buf.closeRequested:
-				signalClose()
+			}
+			if !open {
+				// We've closed
+				return
 			}
 		case sendRST = <-buf.closeRequested:
 			// Signal that we're closing

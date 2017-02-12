@@ -157,7 +157,7 @@
 //     - the window is initialized based on the win parameter in the client
 //       init message
 //     - as the sender transmits data, its transmit window decreases by the
-//       amount of data sent
+//       amount of data sent (not including headers)
 //     - if the sender's transmit window reaches 0, it stalls
 //     - as the receiver's buffers free up, it sends ACKs to the sender that
 //       instruct it to increase its transmit window by a given amount
@@ -209,6 +209,8 @@ const (
 	frameTypeACK     = 2
 	frameTypeRST     = 3
 
+	ackRatio          = 10 // ack every 1/10 of window
+	minWindowSize     = MaxDataLen * ackRatio
 	defaultWindowSize = 500 * 1024 // 500 KB
 	maxID             = (2 << 15) - 1
 
