@@ -20,6 +20,7 @@ var (
 // ensure buffered frames are sent before sending the RST.
 type sendBuffer struct {
 	defaultHeader  []byte
+	window         *window
 	in             chan []byte
 	ack            chan bool
 	closeRequested chan bool
@@ -28,13 +29,10 @@ type sendBuffer struct {
 func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendBuffer {
 	buf := &sendBuffer{
 		defaultHeader:  defaultHeader,
-		in:             make(chan []byte, windowSize),
-		ack:            make(chan bool, windowSize),
+		window:         newWindow(windowSize),
+		in:             make(chan []byte, windowSize), // TODO make this smaller
+		ack:            make(chan bool, windowSize),   // TODO make this smaller
 		closeRequested: make(chan bool, 1),
-	}
-	// Write initial acks to send up to windowSize right away
-	for i := 0; i < windowSize; i++ {
-		buf.ack <- true
 	}
 	go buf.sendLoop(out)
 	return buf

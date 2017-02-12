@@ -16,22 +16,27 @@ import (
 // than <windowSize> frames so as to prevent this. Once the sender receives an
 // ACK from the receiver, it sends a subsequent frame and so on.
 type receiveBuffer struct {
-	ackFrame []byte
-	in       chan []byte
-	ack      chan []byte
-	pool     BufferPool
-	poolable []byte
-	current  []byte
-	closed   bool
-	mx       sync.RWMutex
+	defaultHeader []byte
+	windowSize    int
+	ackInterval   int
+	unacked       int
+	in            chan []byte
+	ack           chan []byte
+	pool          BufferPool
+	poolable      []byte
+	current       []byte
+	closed        bool
+	mx            sync.RWMutex
 }
 
 func newReceiveBuffer(defaultHeader []byte, ack chan []byte, pool BufferPool, windowSize int) *receiveBuffer {
 	return &receiveBuffer{
-		ackFrame: withFrameType(defaultHeader, frameTypeACK),
-		in:       make(chan []byte, windowSize),
-		ack:      ack,
-		pool:     pool,
+		defaultHeader: defaultHeader,
+		windowSize:    windowSize,
+		ackInterval:   windowSize / 10,
+		in:            make(chan []byte, windowSize), // todo: make this smaller
+		ack:           ack,
+		pool:          pool,
 	}
 }
 
@@ -55,10 +60,19 @@ func (buf *receiveBuffer) submit(frame []byte) {
 // As long as some data was already queued, read will not wait for more data
 // even if b has not yet been filled.
 func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err error) {
+	log.Debug("Reading")
+	defer log.Debugf("Read %d", totalN)
 	for {
 		n := copy(b, buf.current)
 		buf.current = buf.current[n:]
 		totalN += n
+		buf.unacked += n
+		if buf.unacked > buf.ackInterval {
+			log.Debugf("Sending ACK: %d", buf.unacked)
+			buf.ack <- ackWithBytes(buf.defaultHeader, int32(buf.unacked))
+			log.Debugf("Sent ACK: %d", buf.unacked)
+			buf.unacked = 0
+		}
 		if n == len(b) {
 			// nothing more to copy
 			return
@@ -122,9 +136,7 @@ func (buf *receiveBuffer) onFrame(frame []byte) {
 		buf.pool.Put(buf.poolable[:maxFrameSize])
 	}
 	buf.poolable = frame
-	buf.current = frame[fullHeaderSize:]
-	// immediately acknowledge that we've queued a frame
-	buf.ack <- buf.ackFrame
+	buf.current = frame[dataHeaderSize:]
 }
 
 func (buf *receiveBuffer) close() {

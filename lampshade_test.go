@@ -18,7 +18,7 @@ import (
 const (
 	testdata = "Hello Dear World"
 
-	windowSize = 2
+	windowSize = maxFrameSize * 2
 	maxPadding = 32
 )
 
@@ -265,12 +265,14 @@ func doTestConnBasicFlow(t *testing.T, mux bool) {
 	}
 	defer l.Close()
 
+	log.Debug("Dialing")
 	conn, err := dial()
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer conn.Close()
 
+	log.Debug("Writing")
 	n, err := conn.Write([]byte(testdata))
 	if !assert.NoError(t, err) {
 		return
@@ -279,6 +281,7 @@ func doTestConnBasicFlow(t *testing.T, mux bool) {
 		return
 	}
 
+	log.Debug("Reading")
 	b := make([]byte, len(testdata))
 	n, err = io.ReadFull(conn, b)
 	if !assert.NoError(t, err) {

@@ -74,7 +74,15 @@ func (s *session) recvLoop() {
 				// Stream was already closed, ignore
 				continue
 			}
-			c.sb.ack <- true
+			_ackedBytes := b[headerSize:ackFrameSize]
+			_, err = io.ReadFull(s, _ackedBytes)
+			if err != nil {
+				s.onSessionError(err, nil)
+				return
+			}
+			ackedBytes := int(int32(binaryEncoding.Uint32(_ackedBytes)))
+			log.Debugf("Got ack: %d", ackedBytes)
+			c.window.add(ackedBytes)
 			continue
 		case frameTypeRST:
 			// Closing existing connection
@@ -92,17 +100,17 @@ func (s *session) recvLoop() {
 		}
 
 		// Read frame length
-		dataLength := b[headerSize:fullHeaderSize]
-		_, err = io.ReadFull(s, dataLength)
+		_dataLength := b[headerSize:dataHeaderSize]
+		_, err = io.ReadFull(s, _dataLength)
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
 		}
 
-		_dataLength := int(binaryEncoding.Uint16(dataLength))
+		dataLength := int(binaryEncoding.Uint16(_dataLength))
 		// Read frame
-		b = b[:fullHeaderSize+_dataLength]
-		_, err = io.ReadFull(s, b[fullHeaderSize:])
+		b = b[:dataHeaderSize+dataLength]
+		_, err = io.ReadFull(s, b[dataHeaderSize:])
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
@@ -134,7 +142,7 @@ func (s *session) sendLoop() {
 	// note - we can use an empty buffer because after encryption with AES in CTR
 	// mode it is effectively random anyway.
 	maxPadding := int(s.maxPadding.Int64())
-	randomPadding := make([]byte, fullHeaderSize+maxPadding)
+	randomPadding := make([]byte, dataHeaderSize+maxPadding)
 	setFrameType(randomPadding, frameTypePadding)
 
 	coalesce := func(b []byte) {
@@ -150,15 +158,22 @@ func (s *session) sendLoop() {
 		}
 		header := frame[dataLen:]
 		coalesce(header)
-		if frameType(header) != frameTypeData {
-			// control message, no data
+		switch frameType(header) {
+		case frameTypeRST:
+			// RST frames only contain the header
 			return
+		case frameTypeACK:
+			// ACK frames also have a bytes field
+			coalesce(frame[:dataLen])
+			return
+		default:
+			// data frame
+			binaryEncoding.PutUint16(lengthBuffer, uint16(dataLen))
+			coalesce(lengthBuffer)
+			coalesce(frame[:dataLen])
+			// Put frame back in pool
+			s.pool.Put(frame[:maxFrameSize])
 		}
-		binaryEncoding.PutUint16(lengthBuffer, uint16(dataLen))
-		coalesce(lengthBuffer)
-		coalesce(frame[:dataLen])
-		// Put frame back in pool
-		s.pool.Put(frame[:maxFrameSize])
 	}
 
 	for frame := range s.out {
@@ -202,7 +217,7 @@ func (s *session) sendLoop() {
 				log.Tracef("Adding random padding of length: %d", randLength.Int64())
 			}
 			binaryEncoding.PutUint16(randomPadding[headerSize:], uint16(randLength.Int64()))
-			coalesce(randomPadding[:fullHeaderSize+int(randLength.Int64())])
+			coalesce(randomPadding[:dataHeaderSize+int(randLength.Int64())])
 		}
 
 		// Write coalesced data out
@@ -261,11 +276,11 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 
 	defaultHeader := newHeader(frameTypeData, id)
 	c = &stream{
-		Conn:    s,
-		session: s,
-		pool:    s.pool,
-		rb:      newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
-		sb:      newSendBuffer(defaultHeader, s.out, s.windowSize),
+		Conn:         s,
+		session:      s,
+		window:       newWindow(s.windowSize),
+		rb:           newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
+		pendingWrite: s.out,
 	}
 	s.streams[id] = c
 	s.mx.Unlock()

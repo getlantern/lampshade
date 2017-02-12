@@ -77,12 +77,12 @@
 //     +---------+-----+---------+--------+--------+---------+---------+
 //     | Version | Win | Max Pad | Cipher | Secret | Send IV | Recv IV |
 //     +---------+-----+---------+--------+--------+---------+---------+
-//     |    1    |  1  |    1    |    1   | 16/32  |  16/12  |  16/12  |
+//     |    1    |  4  |    1    |    1   | 16/32  |  16/12  |  16/12  |
 //     +---------+-----+---------+--------+--------+---------+---------+
 //
 //       Version - the version of the protocol (currently 1)
 //
-//       Win     - transmit window size
+//       Win     - transmit window size in bytes
 //
 //       Max Pad - maximum random padding
 //
@@ -101,24 +101,45 @@
 //   All frames are encrypted with AES128 in CTR mode, using the secret and IV
 //   sent in the Init Session message.
 //
-//   +--------------+-----------+----------+--------+
-//   | Message Type | Stream ID | Data Len |  Data  |
-//   +--------------+-----------+----------+--------+
-//   |      1       |     2     |     2    | <=8192 |
-//   +--------------+-----------+----------+--------+
+//   Every frame starts with this header:
 //
-//   Message Type - indicates the message type.
+//     +--------------+-----------+
+//     | Message Type | Stream ID |
+//     +--------------+-----------+
+//     |      1       |     2     |
+//     +--------------+-----------+
 //
-//      0 = data
-//      1 = padding
-//      2 = ack
-//      3 = rst (close connection)
+//     Message Type - indicates the message type.
 //
-//   Stream ID - unique identifier for stream. (last field for ack and rst)
+//       0 = data
+//       1 = padding
+//       2 = ack
+//       3 = rst (close connection)
 //
-//   Data Len - length of data (only used for message type "data" and "padding")
+//     Stream ID - unique identifier for stream. (last field for ack and rst)
 //
-//   Data - data (only used for message type "data" and "padding")
+//   Data and Padding frames include the below after the header:
+//
+//     +----------+--------+
+//     | Data Len |  Data  |
+//     +----------+--------+
+//     |     2    | <=8192 |
+//     +----------+--------+
+//
+//     Data Len - length of data.
+//
+//     Data - data (only used for message type "data" and "padding")
+//
+//   ACK frames include the below after the header:
+//
+//     +-------+
+//     | Bytes |
+//     +-------+
+//     |   4   |
+//     +-------+
+//
+//     Bytes - additional number of bytes that receiver is willing to receive,
+//             signed 32 bit integer
 //
 // Padding:
 //
@@ -127,6 +148,24 @@
 //   - looks just like a standard frame, with empty data
 //   - the "empty" data actually looks random on the wire since it's being
 //     encrypted with a stream cipher.
+//
+// Flow Control:
+//
+//   Flow control is managed with windows similarly to HTTP/2.
+//
+//     - both ends of a stream maintain a transmit window
+//     - the window is initialized based on the win parameter in the client
+//       init message
+//     - as the sender transmits data, its transmit window decreases by the
+//       amount of data sent
+//     - if the sender's transmit window reaches 0, it stalls
+//     - as the receiver's buffers free up, it sends ACKs to the sender that
+//       instruct it to increase its transmit window by a given amount
+//     - blocked senders become unblocked when their transmit window exceeds 0
+//       again
+//     - if the client requests a window larger than what the server is willing
+//       to buffer, the server can adjust the window by sending an ACK with a
+//       negative bytes value
 //
 package lampshade
 
@@ -143,7 +182,7 @@ const (
 	// client init message
 	clientInitSize = 256
 	versionSize    = 1
-	winSize        = 1
+	winSize        = 4
 	maxPaddingSize = 1
 
 	protocolVersion1 = 1
@@ -156,12 +195,13 @@ const (
 	// framing
 	headerSize     = 3
 	lenSize        = 2
-	fullHeaderSize = headerSize + lenSize
+	dataHeaderSize = headerSize + lenSize
 
 	// MaxDataLen is the maximum length of data in a lampshade frame.
 	MaxDataLen = 8192
 
-	maxFrameSize = fullHeaderSize + MaxDataLen
+	maxFrameSize = dataHeaderSize + MaxDataLen
+	ackFrameSize = headerSize + winSize
 
 	// frame types
 	frameTypeData    = 0
@@ -169,7 +209,7 @@ const (
 	frameTypeACK     = 2
 	frameTypeRST     = 3
 
-	defaultWindowSize = 50
+	defaultWindowSize = 500 * 1024 // 500 KB
 	maxID             = (2 << 15) - 1
 
 	coalesceThreshold = 1500 // basically this is the practical TCP MTU for anything traversing Ethernet
@@ -291,4 +331,14 @@ func setFrameType(header []byte, frameType byte) {
 
 func frameType(header []byte) byte {
 	return header[0]
+}
+
+func ackWithBytes(header []byte, bytes int32) []byte {
+	// note - header and bytes field are reversed to match the usual format for
+	// data frames
+	ack := make([]byte, ackFrameSize)
+	copy(ack[winSize:], header)
+	ack[winSize] = frameTypeACK
+	binaryEncoding.PutUint32(ack, uint32(bytes))
+	return ack
 }
