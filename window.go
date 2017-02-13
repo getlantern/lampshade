@@ -16,6 +16,7 @@ func init() {
 type window struct {
 	size          int
 	positiveAgain chan bool
+	closeCh       chan bool
 	closed        bool
 	mx            sync.Mutex
 }
@@ -24,6 +25,7 @@ func newWindow(initial int) *window {
 	return &window{
 		size:          initial,
 		positiveAgain: make(chan bool),
+		closeCh:       make(chan bool),
 	}
 }
 
@@ -39,7 +41,7 @@ func (w *window) add(delta int) {
 		select {
 		case w.positiveAgain <- true:
 			// ok
-		default:
+		case <-w.closeCh:
 			// nobody waiting anymore
 		}
 	}
@@ -72,6 +74,7 @@ func (w *window) close() {
 	w.closed = true
 	w.mx.Unlock()
 	if shouldClose {
+		close(w.closeCh)
 		select {
 		case <-w.positiveAgain:
 			// drained

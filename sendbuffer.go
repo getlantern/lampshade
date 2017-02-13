@@ -29,7 +29,7 @@ func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendB
 	buf := &sendBuffer{
 		defaultHeader:  defaultHeader,
 		window:         newWindow(windowSize),
-		in:             make(chan []byte, windowSize), // TODO make this smaller
+		in:             make(chan []byte, windowSize),
 		closeRequested: make(chan bool, 1),
 	}
 	go buf.sendLoop(out)
@@ -59,7 +59,7 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 		select {
 		case frame, open := <-buf.in:
 			if frame != nil {
-				windowAvailable := buf.window.sub(len(frame))
+				windowAvailable := buf.window.sub(1)
 				select {
 				case <-windowAvailable:
 					// send allowed

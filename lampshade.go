@@ -77,12 +77,12 @@
 //     +---------+-----+---------+--------+--------+---------+---------+
 //     | Version | Win | Max Pad | Cipher | Secret | Send IV | Recv IV |
 //     +---------+-----+---------+--------+--------+---------+---------+
-//     |    1    |  4  |    1    |    1   | 16/32  |  16/12  |  16/12  |
+//     |    1    |  2  |    1    |    1   | 16/32  |  16/12  |  16/12  |
 //     +---------+-----+---------+--------+--------+---------+---------+
 //
 //       Version - the version of the protocol (currently 1)
 //
-//       Win     - transmit window size in bytes
+//       Win     - transmit window size in # of frames
 //
 //       Max Pad - maximum random padding
 //
@@ -101,13 +101,11 @@
 //   All frames are encrypted with AES128 in CTR mode, using the secret and IV
 //   sent in the Init Session message.
 //
-//   Every frame starts with this header:
-//
-//     +--------------+-----------+
-//     | Message Type | Stream ID |
-//     +--------------+-----------+
-//     |      1       |     2     |
-//     +--------------+-----------+
+//     +--------------+-----------+----------+--------+
+//     | Message Type | Stream ID | Data Len |  Data  |
+//     +--------------+-----------+----------+--------+
+//     |      1       |     2     |     2    | <=8192 |
+//     +--------------+-----------+----------+--------+
 //
 //     Message Type - indicates the message type.
 //
@@ -118,28 +116,9 @@
 //
 //     Stream ID - unique identifier for stream. (last field for ack and rst)
 //
-//   Data and Padding frames include the below after the header:
-//
-//     +----------+--------+
-//     | Data Len |  Data  |
-//     +----------+--------+
-//     |     2    | <=8192 |
-//     +----------+--------+
-//
-//     Data Len - length of data.
+//     Data Len - length of data (or # of frames acked for ACK)
 //
 //     Data - data (only used for message type "data" and "padding")
-//
-//   ACK frames include the below after the header:
-//
-//     +-------+
-//     | Bytes |
-//     +-------+
-//     |   4   |
-//     +-------+
-//
-//     Bytes - additional number of bytes that receiver is willing to receive,
-//             signed 32 bit integer
 //
 // Padding:
 //
@@ -153,11 +132,12 @@
 //
 //   Flow control is managed with windows similarly to HTTP/2.
 //
+//     - windows are sized based on # of frames rather than # of bytes
 //     - both ends of a stream maintain a transmit window
 //     - the window is initialized based on the win parameter in the client
 //       init message
 //     - as the sender transmits data, its transmit window decreases by the
-//       amount of data sent (not including headers)
+//       number of frames sent (not including headers)
 //     - if the sender's transmit window reaches 0, it stalls
 //     - as the receiver's buffers free up, it sends ACKs to the sender that
 //       instruct it to increase its transmit window by a given amount
@@ -165,7 +145,7 @@
 //       again
 //     - if the client requests a window larger than what the server is willing
 //       to buffer, the server can adjust the window by sending an ACK with a
-//       negative bytes value
+//       negative value
 //
 package lampshade
 
@@ -182,7 +162,7 @@ const (
 	// client init message
 	clientInitSize = 256
 	versionSize    = 1
-	winSize        = 4
+	winSize        = 2
 	maxPaddingSize = 1
 
 	protocolVersion1 = 1
@@ -210,8 +190,7 @@ const (
 	frameTypeRST     = 3
 
 	ackRatio          = 10 // ack every 1/10 of window
-	minWindowSize     = MaxDataLen * ackRatio
-	defaultWindowSize = 500 * 1024 // 500 KB
+	defaultWindowSize = 50
 	maxID             = (2 << 15) - 1
 
 	coalesceThreshold = 1500 // basically this is the practical TCP MTU for anything traversing Ethernet
@@ -335,12 +314,12 @@ func frameType(header []byte) byte {
 	return header[0]
 }
 
-func ackWithBytes(header []byte, bytes int32) []byte {
-	// note - header and bytes field are reversed to match the usual format for
+func ackWithFrames(header []byte, frames int16) []byte {
+	// note - header and frames field are reversed to match the usual format for
 	// data frames
 	ack := make([]byte, ackFrameSize)
 	copy(ack[winSize:], header)
 	ack[winSize] = frameTypeACK
-	binaryEncoding.PutUint32(ack, uint32(bytes))
+	binaryEncoding.PutUint16(ack, uint16(frames))
 	return ack
 }

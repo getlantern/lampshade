@@ -13,26 +13,6 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func BenchmarkAlloc(b *testing.B) {
-	source := make([]byte, 8192)
-	rand.Read(source)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		buf := make([]byte, 8192)
-		copy(buf, source)
-	}
-}
-
-func BenchmarkNoAlloc(b *testing.B) {
-	source := make([]byte, 8192)
-	rand.Read(source)
-	buf := make([]byte, 8192)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		copy(buf, source)
-	}
-}
-
 func TestInitAESCTR(t *testing.T) {
 	doTestInit(t, AES128CTR)
 }

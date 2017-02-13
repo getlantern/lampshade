@@ -2,6 +2,7 @@ package lampshade
 
 import (
 	"io"
+	"math"
 	"sync"
 	"time"
 )
@@ -30,11 +31,12 @@ type receiveBuffer struct {
 }
 
 func newReceiveBuffer(defaultHeader []byte, ack chan []byte, pool BufferPool, windowSize int) *receiveBuffer {
+	ackInterval := int(math.Ceil(float64(windowSize) / 10))
 	return &receiveBuffer{
 		defaultHeader: defaultHeader,
 		windowSize:    windowSize,
-		ackInterval:   windowSize / 10,
-		in:            make(chan []byte, windowSize), // todo: make this smaller
+		ackInterval:   ackInterval,
+		in:            make(chan []byte, windowSize),
 		ack:           ack,
 		pool:          pool,
 	}
@@ -60,15 +62,17 @@ func (buf *receiveBuffer) submit(frame []byte) {
 // As long as some data was already queued, read will not wait for more data
 // even if b has not yet been filled.
 func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err error) {
+	defer func() {
+		if buf.unacked >= buf.ackInterval {
+			buf.ack <- ackWithFrames(buf.defaultHeader, int16(buf.unacked))
+			buf.unacked = 0
+		}
+	}()
+
 	for {
 		n := copy(b, buf.current)
 		buf.current = buf.current[n:]
 		totalN += n
-		buf.unacked += n
-		if buf.unacked > buf.ackInterval {
-			buf.ack <- ackWithBytes(buf.defaultHeader, int32(buf.unacked))
-			buf.unacked = 0
-		}
 		if n == len(b) {
 			// nothing more to copy
 			return
@@ -133,6 +137,7 @@ func (buf *receiveBuffer) onFrame(frame []byte) {
 	}
 	buf.poolable = frame
 	buf.current = frame[dataHeaderSize:]
+	buf.unacked++
 }
 
 func (buf *receiveBuffer) close() {

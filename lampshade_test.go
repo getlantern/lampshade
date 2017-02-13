@@ -453,7 +453,7 @@ func feed(t *testing.T, conn net.Conn) {
 	}
 }
 
-func BenchmarkConnMux(b *testing.B) {
+func BenchmarkLampshade(b *testing.B) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		b.Fatal(err)
@@ -465,7 +465,7 @@ func BenchmarkConnMux(b *testing.B) {
 	}
 	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA())
 
-	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), AES128CTR, &pk.RSA().PublicKey, func() (net.Conn, error) {
+	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), ChaCha20, &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})()
 	if err != nil {

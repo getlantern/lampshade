@@ -26,8 +26,7 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 // If a new physical connection is needed but can't be established, the dialer
 // returns the underlying dial error.
 //
-// windowSize - transmit window size in bytes. If <= 0, defaults to 500 KB. If
-//              81,920, defaults to 81,920.
+// windowSize - transmit window size in # of frames. If <= 0, defaults to 50.
 //
 // maxPadding - maximum random padding to use when necessary.
 //
@@ -44,9 +43,6 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
 	if windowSize <= 0 {
 		windowSize = defaultWindowSize
-	}
-	if windowSize <= minWindowSize {
-		windowSize = minWindowSize
 	}
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID

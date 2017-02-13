@@ -31,6 +31,7 @@ type listener struct {
 // serverPrivateKey - if provided, this listener will expect connections to use
 //                    encryption
 func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey) net.Listener {
+	// TODO: add a maxWindowSize
 	l := &listener{
 		wrapped:          wrapped,
 		pool:             pool,

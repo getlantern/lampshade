@@ -47,7 +47,7 @@ ackloop:
 			break ackloop
 		}
 	}
-	assert.Equal(t, 2, totalAcks)
+	assert.Equal(t, 1, totalAcks)
 }
 
 type testpool struct {
