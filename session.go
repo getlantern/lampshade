@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"bufio"
 	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
@@ -53,11 +54,14 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt cipher.
 }
 
 func (s *session) recvLoop() {
+	// Buffer reads to reduce syscall overhead
+	r := bufio.NewReader(s)
+
 	for {
 		b := s.pool.getForFrame()
 		// First read header
 		header := b[:headerSize]
-		_, err := io.ReadFull(s, header)
+		_, err := io.ReadFull(r, header)
 		if err != nil {
 			s.onSessionError(fmt.Errorf("Unable to read header: %v", err), nil)
 			return
@@ -75,7 +79,7 @@ func (s *session) recvLoop() {
 				continue
 			}
 			_ackedFrames := b[headerSize:ackFrameSize]
-			_, err = io.ReadFull(s, _ackedFrames)
+			_, err = io.ReadFull(r, _ackedFrames)
 			if err != nil {
 				s.onSessionError(err, nil)
 				return
@@ -100,7 +104,7 @@ func (s *session) recvLoop() {
 
 		// Read frame length
 		_dataLength := b[headerSize:dataHeaderSize]
-		_, err = io.ReadFull(s, _dataLength)
+		_, err = io.ReadFull(r, _dataLength)
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
@@ -109,7 +113,7 @@ func (s *session) recvLoop() {
 		dataLength := int(binaryEncoding.Uint16(_dataLength))
 		// Read frame
 		b = b[:dataHeaderSize+dataLength]
-		_, err = io.ReadFull(s, b[dataHeaderSize:])
+		_, err = io.ReadFull(r, b[dataHeaderSize:])
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
