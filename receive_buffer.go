@@ -64,7 +64,7 @@ func (buf *receiveBuffer) submit(frame []byte) {
 func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err error) {
 	defer func() {
 		if buf.unacked >= buf.ackInterval {
-			buf.ack <- ackWithFrames(buf.defaultHeader, int16(buf.unacked))
+			buf.ack <- ackWithFrames(buf.defaultHeader, int32(buf.unacked))
 			buf.unacked = 0
 		}
 	}()

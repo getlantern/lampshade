@@ -5,6 +5,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"os"
+	"runtime/pprof"
 	"sync"
 	"testing"
 	"time"
@@ -466,6 +468,16 @@ func BenchmarkThroughputLampshadeChaCha20(b *testing.B) {
 }
 
 func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
+	f, err := os.Create(cipherCode.String() + ".cpuprofile")
+	if err != nil {
+		b.Fatal("could not create CPU profile: ", err)
+	}
+	err = pprof.StartCPUProfile(f)
+	if err != nil {
+		b.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		b.Fatal(err)
@@ -488,6 +500,16 @@ func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
 }
 
 func BenchmarkThroughputTCP(b *testing.B) {
+	f, err := os.Create("tcp.cpuprofile")
+	if err != nil {
+		b.Fatal("could not create CPU profile: ", err)
+	}
+	err = pprof.StartCPUProfile(f)
+	if err != nil {
+		b.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
 	lst, err := net.Listen("tcp", ":0")
 	if err != nil {
 		b.Fatal(err)

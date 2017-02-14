@@ -26,7 +26,7 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 // If a new physical connection is needed but can't be established, the dialer
 // returns the underlying dial error.
 //
-// windowSize - transmit window size in # of frames. If <= 0, defaults to 50.
+// windowSize - transmit window size in # of frames. If <= 0, defaults to 1250.
 //
 // maxPadding - maximum random padding to use when necessary.
 //

@@ -79,7 +79,7 @@ func (s *session) recvLoop() {
 				s.onSessionError(err, nil)
 				return
 			}
-			ackedFrames := int(int16(binaryEncoding.Uint16(_ackedFrames)))
+			ackedFrames := int(int32(binaryEncoding.Uint32(_ackedFrames)))
 			c.sb.window.add(ackedFrames)
 			continue
 		case frameTypeRST:

@@ -77,7 +77,7 @@
 //     +---------+-----+---------+--------+--------+---------+---------+
 //     | Version | Win | Max Pad | Cipher | Secret | Send IV | Recv IV |
 //     +---------+-----+---------+--------+--------+---------+---------+
-//     |    1    |  2  |    1    |    1   | 16/32  |  16/12  |  16/12  |
+//     |    1    |  4  |    1    |    1   | 16/32  |  16/12  |  16/12  |
 //     +---------+-----+---------+--------+--------+---------+---------+
 //
 //       Version - the version of the protocol (currently 1)
@@ -102,9 +102,10 @@
 //   sent in the Init Session message.
 //
 //     +--------------+-----------+----------+--------+
-//     | Message Type | Stream ID | Data Len |  Data  |
+//     |              |           | Data Len |        |
+//     | Message Type | Stream ID | / Frames |  Data  |
 //     +--------------+-----------+----------+--------+
-//     |      1       |     2     |     2    | <=8192 |
+//     |      1       |     2     |    2/4   | <=1443 |
 //     +--------------+-----------+----------+--------+
 //
 //     Message Type - indicates the message type.
@@ -116,9 +117,11 @@
 //
 //     Stream ID - unique identifier for stream. (last field for ack and rst)
 //
-//     Data Len - length of data (or # of frames acked for ACK)
+//     Data Len - length of data (for type "data" or "padding")
 //
-//     Data - data (only used for message type "data" and "padding")
+//     Frames   - number of frames being ACK'd (for type ACK)
+//
+//     Data     - data (for type "data" or "padding")
 //
 // Padding:
 //
@@ -162,7 +165,7 @@ const (
 	// client init message
 	clientInitSize = 256
 	versionSize    = 1
-	winSize        = 2
+	winSize        = 4
 	maxPaddingSize = 1
 
 	protocolVersion1 = 1
@@ -179,11 +182,11 @@ const (
 	lenSize        = 2
 	dataHeaderSize = headerSize + lenSize
 
-	// MaxDataLen is the maximum length of data in a lampshade frame.
-	MaxDataLen = 8192
-
-	maxFrameSize = dataHeaderSize + MaxDataLen
+	maxFrameSize = coalesceThreshold
 	ackFrameSize = headerSize + winSize
+
+	// MaxDataLen is the maximum length of data in a lampshade frame.
+	MaxDataLen = maxFrameSize - dataHeaderSize
 
 	// frame types
 	frameTypeData    = 0
@@ -192,10 +195,10 @@ const (
 	frameTypeRST     = 3
 
 	ackRatio          = 10 // ack every 1/10 of window
-	defaultWindowSize = 50
+	defaultWindowSize = 2 * 1024 * 1024 / MaxDataLen
 	maxID             = (2 << 15) - 1
 
-	coalesceThreshold = 1500 // basically this is the practical TCP MTU for anything traversing Ethernet
+	coalesceThreshold = 1448 // basically this is the practical TCP MSS for anything traversing Ethernet and using TCP timestamps
 )
 
 var (
@@ -265,9 +268,9 @@ type BufferPool interface {
 	Put([]byte)
 }
 
-// NewBufferPool constructs a BufferPool with the given maximumSize
-func NewBufferPool(maxSize int) BufferPool {
-	return &bufferPool{bpool.NewBytePool(maxSize, maxFrameSize)}
+// NewBufferPool constructs a BufferPool with the given maximum size in bytes
+func NewBufferPool(maxBytes int) BufferPool {
+	return &bufferPool{bpool.NewBytePool(maxBytes/maxFrameSize, maxFrameSize)}
 }
 
 type bufferPool struct {
@@ -316,12 +319,12 @@ func frameType(header []byte) byte {
 	return header[0]
 }
 
-func ackWithFrames(header []byte, frames int16) []byte {
+func ackWithFrames(header []byte, frames int32) []byte {
 	// note - header and frames field are reversed to match the usual format for
 	// data frames
 	ack := make([]byte, ackFrameSize)
 	copy(ack[winSize:], header)
 	ack[winSize] = frameTypeACK
-	binaryEncoding.PutUint16(ack, uint16(frames))
+	binaryEncoding.PutUint32(ack, uint32(frames))
 	return ack
 }
