@@ -38,6 +38,8 @@ func (c Cipher) ivSize() int {
 
 func (c Cipher) String() string {
 	switch c {
+	case NoEncryption:
+		return "None"
 	case AES128CTR:
 		return "AES128_CTR"
 	case ChaCha20:
