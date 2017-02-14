@@ -86,7 +86,7 @@
 //
 //       Max Pad - maximum random padding
 //
-//       Cipher  - 1 = AES128_CTR or 2 = ChaCha20
+//       Cipher  - 1 = None, 2 = AES128_CTR, 3 = ChaCha20
 //
 //       Secret  - 128 bits of secret for AES128_CTR, 256 bits for ChaCha20
 //
@@ -167,10 +167,12 @@ const (
 
 	protocolVersion1 = 1
 
+	// NoEncryption is no encryption
+	NoEncryption = 1
 	// AES128CTR is 128-bit AES in CTR mode
-	AES128CTR = 1
+	AES128CTR = 2
 	// ChaCha20 is 256-bit ChaCha20 with a 96-bit Nonce
-	ChaCha20 = 2
+	ChaCha20 = 3
 
 	// framing
 	headerSize     = 3

@@ -453,7 +453,19 @@ func feed(t *testing.T, conn net.Conn) {
 	}
 }
 
-func BenchmarkLampshade(b *testing.B) {
+func BenchmarkThroughputLampshadeNoEncryption(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, NoEncryption)
+}
+
+func BenchmarkThroughputLampshadeAES128CTR(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, AES128CTR)
+}
+
+func BenchmarkThroughputLampshadeChaCha20(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, ChaCha20)
+}
+
+func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		b.Fatal(err)
@@ -465,7 +477,7 @@ func BenchmarkLampshade(b *testing.B) {
 	}
 	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA())
 
-	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), ChaCha20, &pk.RSA().PublicKey, func() (net.Conn, error) {
+	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), cipherCode, &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})()
 	if err != nil {
@@ -475,7 +487,7 @@ func BenchmarkLampshade(b *testing.B) {
 	doBench(b, lst, conn)
 }
 
-func BenchmarkTCP(b *testing.B) {
+func BenchmarkThroughputTCP(b *testing.B) {
 	lst, err := net.Listen("tcp", ":0")
 	if err != nil {
 		b.Fatal(err)

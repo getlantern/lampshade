@@ -67,8 +67,40 @@ func newIV(cipherCode Cipher) ([]byte, error) {
 	return iv, nil
 }
 
-func newCipher(cipherCode Cipher, secret []byte, iv []byte) (cipher.Stream, error) {
+func newDecrypter(cipherCode Cipher, secret []byte, iv []byte) (func([]byte), error) {
+	c, err := cipherFor(cipherCode, secret, iv)
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return func(b []byte) {
+		}, nil
+	}
+	return func(b []byte) {
+		c.XORKeyStream(b, b)
+	}, nil
+}
+
+func newEncrypter(cipherCode Cipher, secret []byte, iv []byte) (func([]byte, []byte), error) {
+	c, err := cipherFor(cipherCode, secret, iv)
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return func(dst []byte, src []byte) {
+			copy(dst, src)
+		}, nil
+	}
+	return func(dst []byte, src []byte) {
+		c.XORKeyStream(dst, src)
+	}, nil
+}
+
+func cipherFor(cipherCode Cipher, secret []byte, iv []byte) (cipher.Stream, error) {
 	switch cipherCode {
+	case NoEncryption:
+		log.Debug("WARNING - ENCRYPTION DISABLED!!")
+		return nil, nil
 	case AES128CTR:
 		block, err := aes.NewCipher(secret)
 		if err != nil {

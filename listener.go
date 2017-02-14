@@ -96,11 +96,11 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("Unable to decode client init msg: %v", err)
 	}
-	decrypt, err := newCipher(cipherCode, secret, sendIV)
+	decrypt, err := newDecrypter(cipherCode, secret, sendIV)
 	if err != nil {
 		return fmt.Errorf("Unable to initialize decryption cipher: %v", err)
 	}
-	encrypt, err := newCipher(cipherCode, secret, recvIV)
+	encrypt, err := newEncrypter(cipherCode, secret, recvIV)
 	if err != nil {
 		return fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}

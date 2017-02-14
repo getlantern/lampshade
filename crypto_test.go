@@ -44,6 +44,10 @@ func doTestInit(t *testing.T, cipherCode Cipher) {
 	assert.EqualValues(t, recvIV, _recvIV)
 }
 
+func TestCryptoPrototypeNoEncryption(t *testing.T) {
+	doTestCryptoPrototype(t, NoEncryption)
+}
+
 func TestCryptoPrototypeAESCTR(t *testing.T) {
 	doTestCryptoPrototype(t, AES128CTR)
 }
@@ -58,19 +62,19 @@ func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
 		return
 	}
 
-	clientEncrypt, err := newCipher(cipherCode, secret, sendIV)
+	clientEncrypt, err := newEncrypter(cipherCode, secret, sendIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	clientDecrypt, err := newCipher(cipherCode, secret, recvIV)
+	clientDecrypt, err := newDecrypter(cipherCode, secret, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	serverEncrypt, err := newCipher(cipherCode, secret, recvIV)
+	serverEncrypt, err := newEncrypter(cipherCode, secret, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	serverDecrypt, err := newCipher(cipherCode, secret, sendIV)
+	serverDecrypt, err := newDecrypter(cipherCode, secret, sendIV)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -78,16 +82,14 @@ func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
 	// This scenario mimics and echo server
 	for _, msg := range []string{"hi", "1", "", "and some more stuff"} {
 		req := []byte(msg)
-		reqEncrypted := make([]byte, len(req))
-		resp := make([]byte, len(req))
-		respEncrypted := make([]byte, len(req))
-		respDecrypted := make([]byte, len(req))
+		req2 := make([]byte, len(req))
+		req3 := make([]byte, len(req))
 
-		clientEncrypt.XORKeyStream(reqEncrypted, req)
-		serverDecrypt.XORKeyStream(resp, reqEncrypted)
-		serverEncrypt.XORKeyStream(respEncrypted, resp)
-		clientDecrypt.XORKeyStream(respDecrypted, respEncrypted)
-		assert.Equal(t, msg, string(respDecrypted))
+		clientEncrypt(req2, req)
+		serverDecrypt(req2)
+		serverEncrypt(req3, req2)
+		clientDecrypt(req3)
+		assert.Equal(t, msg, string(req3))
 	}
 }
 

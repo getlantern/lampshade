@@ -1,7 +1,6 @@
 package lampshade
 
 import (
-	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -32,13 +31,13 @@ type session struct {
 // windowSize and pool. If connCh is provided, the session will notify of new
 // streams as they are opened. If beforeClose is provided, the session will use
 // it to notify when it's about to close.
-func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt cipher.Stream, encrypt cipher.Stream, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
+func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt func([]byte), encrypt func(dst []byte, src []byte), clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
 	s := &session{
 		Conn:          conn,
 		windowSize:    windowSize,
 		maxPadding:    big.NewInt(int64(maxPadding)),
-		decrypt:       func(b []byte) { decrypt.XORKeyStream(b, b) },
-		encrypt:       func(dst []byte, src []byte) { encrypt.XORKeyStream(dst, src) },
+		decrypt:       decrypt,
+		encrypt:       encrypt,
 		clientInitMsg: clientInitMsg,
 		pool:          pool,
 		out:           make(chan []byte),

@@ -129,11 +129,11 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	decrypt, err := newCipher(d.cipherCode, secret, recvIV)
+	decrypt, err := newDecrypter(d.cipherCode, secret, recvIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to initialize decryption cipher: %v", err)
 	}
-	encrypt, err := newCipher(d.cipherCode, secret, sendIV)
+	encrypt, err := newEncrypter(d.cipherCode, secret, sendIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}
