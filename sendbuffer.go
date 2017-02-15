@@ -20,21 +20,17 @@ var (
 // ensure buffered frames are sent before sending the RST.
 type sendBuffer struct {
 	defaultHeader  []byte
+	window         *window
 	in             chan []byte
-	ack            chan bool
 	closeRequested chan bool
 }
 
 func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendBuffer {
 	buf := &sendBuffer{
 		defaultHeader:  defaultHeader,
+		window:         newWindow(windowSize),
 		in:             make(chan []byte, windowSize),
-		ack:            make(chan bool, windowSize),
 		closeRequested: make(chan bool, 1),
-	}
-	// Write initial acks to send up to windowSize right away
-	for i := 0; i < windowSize; i++ {
-		buf.ack <- true
 	}
 	go buf.sendLoop(out)
 	return buf
@@ -59,22 +55,31 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 		closeTimer.Reset(closeTimeout)
 	}
 
-	// Send one frame for every ack
 	for {
 		select {
-		case <-buf.ack:
-			// Grab next frame
-			select {
-			case frame, open := <-buf.in:
-				if frame != nil {
+		case frame, open := <-buf.in:
+			if frame != nil {
+				windowAvailable := buf.window.sub(1)
+				select {
+				case <-windowAvailable:
+					// send allowed
 					out <- append(frame, buf.defaultHeader...)
+				case sendRST = <-buf.closeRequested:
+					// close requested before window available
+					signalClose()
+					select {
+					case <-windowAvailable:
+						// send allowed
+						out <- append(frame, buf.defaultHeader...)
+					case <-closeTimer.C:
+						// closed before window available
+						return
+					}
 				}
-				if !open {
-					// We've closed
-					return
-				}
-			case sendRST = <-buf.closeRequested:
-				signalClose()
+			}
+			if !open {
+				// We've closed
+				return
 			}
 		case sendRST = <-buf.closeRequested:
 			// Signal that we're closing

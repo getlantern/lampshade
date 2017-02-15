@@ -77,16 +77,16 @@
 //     +---------+-----+---------+--------+--------+---------+---------+
 //     | Version | Win | Max Pad | Cipher | Secret | Send IV | Recv IV |
 //     +---------+-----+---------+--------+--------+---------+---------+
-//     |    1    |  1  |    1    |    1   | 16/32  |  16/12  |  16/12  |
+//     |    1    |  4  |    1    |    1   | 16/32  |  16/12  |  16/12  |
 //     +---------+-----+---------+--------+--------+---------+---------+
 //
 //       Version - the version of the protocol (currently 1)
 //
-//       Win     - transmit window size
+//       Win     - transmit window size in # of frames
 //
 //       Max Pad - maximum random padding
 //
-//       Cipher  - 1 = AES128_CTR or 2 = ChaCha20
+//       Cipher  - 1 = None, 2 = AES128_CTR, 3 = ChaCha20
 //
 //       Secret  - 128 bits of secret for AES128_CTR, 256 bits for ChaCha20
 //
@@ -101,24 +101,27 @@
 //   All frames are encrypted with AES128 in CTR mode, using the secret and IV
 //   sent in the Init Session message.
 //
-//   +--------------+-----------+----------+--------+
-//   | Message Type | Stream ID | Data Len |  Data  |
-//   +--------------+-----------+----------+--------+
-//   |      1       |     2     |     2    | <=8192 |
-//   +--------------+-----------+----------+--------+
+//     +--------------+-----------+----------+--------+
+//     |              |           | Data Len |        |
+//     | Message Type | Stream ID | / Frames |  Data  |
+//     +--------------+-----------+----------+--------+
+//     |      1       |     2     |    2/4   | <=1443 |
+//     +--------------+-----------+----------+--------+
 //
-//   Message Type - indicates the message type.
+//     Message Type - indicates the message type.
 //
-//      0 = data
-//      1 = padding
-//      2 = ack
-//      3 = rst (close connection)
+//       0 = data
+//       1 = padding
+//       2 = ack
+//       3 = rst (close connection)
 //
-//   Stream ID - unique identifier for stream. (last field for ack and rst)
+//     Stream ID - unique identifier for stream. (last field for ack and rst)
 //
-//   Data Len - length of data (only used for message type "data" and "padding")
+//     Data Len - length of data (for type "data" or "padding")
 //
-//   Data - data (only used for message type "data" and "padding")
+//     Frames   - number of frames being ACK'd (for type ACK)
+//
+//     Data     - data (for type "data" or "padding")
 //
 // Padding:
 //
@@ -127,6 +130,25 @@
 //   - looks just like a standard frame, with empty data
 //   - the "empty" data actually looks random on the wire since it's being
 //     encrypted with a stream cipher.
+//
+// Flow Control:
+//
+//   Flow control is managed with windows similarly to HTTP/2.
+//
+//     - windows are sized based on # of frames rather than # of bytes
+//     - both ends of a stream maintain a transmit window
+//     - the window is initialized based on the win parameter in the client
+//       init message
+//     - as the sender transmits data, its transmit window decreases by the
+//       number of frames sent (not including headers)
+//     - if the sender's transmit window reaches 0, it stalls
+//     - as the receiver's buffers free up, it sends ACKs to the sender that
+//       instruct it to increase its transmit window by a given amount
+//     - blocked senders become unblocked when their transmit window exceeds 0
+//       again
+//     - if the client requests a window larger than what the server is willing
+//       to buffer, the server can adjust the window by sending an ACK with a
+//       negative value
 //
 package lampshade
 
@@ -143,25 +165,28 @@ const (
 	// client init message
 	clientInitSize = 256
 	versionSize    = 1
-	winSize        = 1
+	winSize        = 4
 	maxPaddingSize = 1
 
 	protocolVersion1 = 1
 
+	// NoEncryption is no encryption
+	NoEncryption = 1
 	// AES128CTR is 128-bit AES in CTR mode
-	AES128CTR = 1
+	AES128CTR = 2
 	// ChaCha20 is 256-bit ChaCha20 with a 96-bit Nonce
-	ChaCha20 = 2
+	ChaCha20 = 3
 
 	// framing
 	headerSize     = 3
 	lenSize        = 2
-	fullHeaderSize = headerSize + lenSize
+	dataHeaderSize = headerSize + lenSize
+
+	maxFrameSize = coalesceThreshold
+	ackFrameSize = headerSize + winSize
 
 	// MaxDataLen is the maximum length of data in a lampshade frame.
-	MaxDataLen = 8192
-
-	maxFrameSize = fullHeaderSize + MaxDataLen
+	MaxDataLen = maxFrameSize - dataHeaderSize
 
 	// frame types
 	frameTypeData    = 0
@@ -169,10 +194,11 @@ const (
 	frameTypeACK     = 2
 	frameTypeRST     = 3
 
-	defaultWindowSize = 50
+	ackRatio          = 10 // ack every 1/10 of window
+	defaultWindowSize = 2 * 1024 * 1024 / MaxDataLen
 	maxID             = (2 << 15) - 1
 
-	coalesceThreshold = 1500 // basically this is the practical TCP MTU for anything traversing Ethernet
+	coalesceThreshold = 1448 // basically this is the practical TCP MSS for anything traversing Ethernet and using TCP timestamps
 )
 
 var (
@@ -242,9 +268,9 @@ type BufferPool interface {
 	Put([]byte)
 }
 
-// NewBufferPool constructs a BufferPool with the given maximumSize
-func NewBufferPool(maxSize int) BufferPool {
-	return &bufferPool{bpool.NewBytePool(maxSize, maxFrameSize)}
+// NewBufferPool constructs a BufferPool with the given maximum size in bytes
+func NewBufferPool(maxBytes int) BufferPool {
+	return &bufferPool{bpool.NewBytePool(maxBytes/maxFrameSize, maxFrameSize)}
 }
 
 type bufferPool struct {
@@ -291,4 +317,14 @@ func setFrameType(header []byte, frameType byte) {
 
 func frameType(header []byte) byte {
 	return header[0]
+}
+
+func ackWithFrames(header []byte, frames int32) []byte {
+	// note - header and frames field are reversed to match the usual format for
+	// data frames
+	ack := make([]byte, ackFrameSize)
+	copy(ack[winSize:], header)
+	ack[winSize] = frameTypeACK
+	binaryEncoding.PutUint32(ack, uint32(frames))
+	return ack
 }

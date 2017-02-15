@@ -26,8 +26,7 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 // If a new physical connection is needed but can't be established, the dialer
 // returns the underlying dial error.
 //
-// windowSize - how many frames to queue, used to bound memory use. Each frame
-// takes about 8KB of memory. If <= 0, defaults to 50.
+// windowSize - transmit window size in # of frames. If <= 0, defaults to 1250.
 //
 // maxPadding - maximum random padding to use when necessary.
 //
@@ -130,11 +129,11 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	decrypt, err := newCipher(d.cipherCode, secret, recvIV)
+	decrypt, err := newDecrypter(d.cipherCode, secret, recvIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to initialize decryption cipher: %v", err)
 	}
-	encrypt, err := newCipher(d.cipherCode, secret, sendIV)
+	encrypt, err := newEncrypter(d.cipherCode, secret, sendIV)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}

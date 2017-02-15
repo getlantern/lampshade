@@ -5,6 +5,8 @@ import (
 	"io"
 	"math/rand"
 	"net"
+	"os"
+	"runtime/pprof"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +20,7 @@ import (
 const (
 	testdata = "Hello Dear World"
 
-	windowSize = 2
+	windowSize = 4
 	maxPadding = 32
 )
 
@@ -339,6 +341,7 @@ func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint16) (net.Listener, fu
 				defer wg.Done()
 
 				b := make([]byte, 4)
+				total := 0
 				for {
 					n, readErr := conn.Read(b)
 					if readErr != nil && readErr != io.EOF {
@@ -351,6 +354,7 @@ func doEchoServerAndDialer(mux bool, maxStreamsPerConn uint16) (net.Listener, fu
 						return
 					}
 					_, writeErr := conn.Write(b[:n])
+					total += n
 					if writeErr != nil {
 						log.Errorf("Error writing for echo: %v", writeErr)
 						return
@@ -451,7 +455,29 @@ func feed(t *testing.T, conn net.Conn) {
 	}
 }
 
-func BenchmarkConnMux(b *testing.B) {
+func BenchmarkThroughputLampshadeNoEncryption(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, NoEncryption)
+}
+
+func BenchmarkThroughputLampshadeAES128CTR(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, AES128CTR)
+}
+
+func BenchmarkThroughputLampshadeChaCha20(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, ChaCha20)
+}
+
+func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
+	f, err := os.Create(cipherCode.String() + ".cpuprofile")
+	if err != nil {
+		b.Fatal("could not create CPU profile: ", err)
+	}
+	err = pprof.StartCPUProfile(f)
+	if err != nil {
+		b.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		b.Fatal(err)
@@ -463,7 +489,7 @@ func BenchmarkConnMux(b *testing.B) {
 	}
 	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA())
 
-	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), AES128CTR, &pk.RSA().PublicKey, func() (net.Conn, error) {
+	conn, err := Dialer(25, maxPadding, 0, NewBufferPool(100), cipherCode, &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})()
 	if err != nil {
@@ -473,7 +499,17 @@ func BenchmarkConnMux(b *testing.B) {
 	doBench(b, lst, conn)
 }
 
-func BenchmarkTCP(b *testing.B) {
+func BenchmarkThroughputTCP(b *testing.B) {
+	f, err := os.Create("tcp.cpuprofile")
+	if err != nil {
+		b.Fatal("could not create CPU profile: ", err)
+	}
+	err = pprof.StartCPUProfile(f)
+	if err != nil {
+		b.Fatal("could not start CPU profile: ", err)
+	}
+	defer pprof.StopCPUProfile()
+
 	lst, err := net.Listen("tcp", ":0")
 	if err != nil {
 		b.Fatal(err)

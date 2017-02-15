@@ -38,6 +38,8 @@ func (c Cipher) ivSize() int {
 
 func (c Cipher) String() string {
 	switch c {
+	case NoEncryption:
+		return "None"
 	case AES128CTR:
 		return "AES128_CTR"
 	case ChaCha20:
@@ -67,8 +69,40 @@ func newIV(cipherCode Cipher) ([]byte, error) {
 	return iv, nil
 }
 
-func newCipher(cipherCode Cipher, secret []byte, iv []byte) (cipher.Stream, error) {
+func newDecrypter(cipherCode Cipher, secret []byte, iv []byte) (func([]byte), error) {
+	c, err := cipherFor(cipherCode, secret, iv)
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return func(b []byte) {
+		}, nil
+	}
+	return func(b []byte) {
+		c.XORKeyStream(b, b)
+	}, nil
+}
+
+func newEncrypter(cipherCode Cipher, secret []byte, iv []byte) (func([]byte, []byte), error) {
+	c, err := cipherFor(cipherCode, secret, iv)
+	if err != nil {
+		return nil, err
+	}
+	if c == nil {
+		return func(dst []byte, src []byte) {
+			copy(dst, src)
+		}, nil
+	}
+	return func(dst []byte, src []byte) {
+		c.XORKeyStream(dst, src)
+	}, nil
+}
+
+func cipherFor(cipherCode Cipher, secret []byte, iv []byte) (cipher.Stream, error) {
 	switch cipherCode {
+	case NoEncryption:
+		log.Debug("WARNING - ENCRYPTION DISABLED!!")
+		return nil, nil
 	case AES128CTR:
 		block, err := aes.NewCipher(secret)
 		if err != nil {
@@ -86,7 +120,9 @@ func buildClientInitMsg(serverPublicKey *rsa.PublicKey, windowSize int, maxPaddi
 	secretSize := cipherCode.secretSize()
 	ivSize := cipherCode.ivSize()
 	plainText := make([]byte, 0, winSize+secretSize+ivSize*2)
-	plainText = append(plainText, byte(windowSize))
+	_windowSize := make([]byte, winSize)
+	binaryEncoding.PutUint32(_windowSize, uint32(windowSize))
+	plainText = append(plainText, _windowSize...)
 	plainText = append(plainText, byte(maxPadding))
 	plainText = append(plainText, byte(cipherCode))
 	plainText = append(plainText, secret...)
@@ -104,8 +140,8 @@ func decodeClientInitMsg(serverPrivateKey *rsa.PrivateKey, msg []byte) (windowSi
 	if err != nil {
 		return 0, 0, 0, nil, nil, nil, fmt.Errorf("Unable to decrypt init message: %v", err)
 	}
-	_windowSize, pt := consume(pt, 1)
-	windowSize = int(_windowSize[0])
+	_windowSize, pt := consume(pt, winSize)
+	windowSize = int(binaryEncoding.Uint32(_windowSize))
 	_maxPadding, pt := consume(pt, 1)
 	maxPadding = int(_maxPadding[0])
 	_cipherCode, pt := consume(pt, 1)

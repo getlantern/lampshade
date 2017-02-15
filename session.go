@@ -1,7 +1,6 @@
 package lampshade
 
 import (
-	"crypto/cipher"
 	"crypto/rand"
 	"fmt"
 	"io"
@@ -32,13 +31,13 @@ type session struct {
 // windowSize and pool. If connCh is provided, the session will notify of new
 // streams as they are opened. If beforeClose is provided, the session will use
 // it to notify when it's about to close.
-func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt cipher.Stream, encrypt cipher.Stream, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
+func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt func([]byte), encrypt func(dst []byte, src []byte), clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
 	s := &session{
 		Conn:          conn,
 		windowSize:    windowSize,
 		maxPadding:    big.NewInt(int64(maxPadding)),
-		decrypt:       func(b []byte) { decrypt.XORKeyStream(b, b) },
-		encrypt:       func(dst []byte, src []byte) { encrypt.XORKeyStream(dst, src) },
+		decrypt:       decrypt,
+		encrypt:       encrypt,
 		clientInitMsg: clientInitMsg,
 		pool:          pool,
 		out:           make(chan []byte),
@@ -74,7 +73,14 @@ func (s *session) recvLoop() {
 				// Stream was already closed, ignore
 				continue
 			}
-			c.sb.ack <- true
+			_ackedFrames := b[headerSize:ackFrameSize]
+			_, err = io.ReadFull(s, _ackedFrames)
+			if err != nil {
+				s.onSessionError(err, nil)
+				return
+			}
+			ackedFrames := int(int32(binaryEncoding.Uint32(_ackedFrames)))
+			c.sb.window.add(ackedFrames)
 			continue
 		case frameTypeRST:
 			// Closing existing connection
@@ -92,17 +98,17 @@ func (s *session) recvLoop() {
 		}
 
 		// Read frame length
-		dataLength := b[headerSize:fullHeaderSize]
-		_, err = io.ReadFull(s, dataLength)
+		_dataLength := b[headerSize:dataHeaderSize]
+		_, err = io.ReadFull(s, _dataLength)
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
 		}
 
-		_dataLength := int(binaryEncoding.Uint16(dataLength))
+		dataLength := int(binaryEncoding.Uint16(_dataLength))
 		// Read frame
-		b = b[:fullHeaderSize+_dataLength]
-		_, err = io.ReadFull(s, b[fullHeaderSize:])
+		b = b[:dataHeaderSize+dataLength]
+		_, err = io.ReadFull(s, b[dataHeaderSize:])
 		if err != nil {
 			s.onSessionError(err, nil)
 			return
@@ -134,7 +140,7 @@ func (s *session) sendLoop() {
 	// note - we can use an empty buffer because after encryption with AES in CTR
 	// mode it is effectively random anyway.
 	maxPadding := int(s.maxPadding.Int64())
-	randomPadding := make([]byte, fullHeaderSize+maxPadding)
+	randomPadding := make([]byte, dataHeaderSize+maxPadding)
 	setFrameType(randomPadding, frameTypePadding)
 
 	coalesce := func(b []byte) {
@@ -150,15 +156,22 @@ func (s *session) sendLoop() {
 		}
 		header := frame[dataLen:]
 		coalesce(header)
-		if frameType(header) != frameTypeData {
-			// control message, no data
+		switch frameType(header) {
+		case frameTypeRST:
+			// RST frames only contain the header
 			return
+		case frameTypeACK:
+			// ACK frames also have a bytes field
+			coalesce(frame[:dataLen])
+			return
+		default:
+			// data frame
+			binaryEncoding.PutUint16(lengthBuffer, uint16(dataLen))
+			coalesce(lengthBuffer)
+			coalesce(frame[:dataLen])
+			// Put frame back in pool
+			s.pool.Put(frame[:maxFrameSize])
 		}
-		binaryEncoding.PutUint16(lengthBuffer, uint16(dataLen))
-		coalesce(lengthBuffer)
-		coalesce(frame[:dataLen])
-		// Put frame back in pool
-		s.pool.Put(frame[:maxFrameSize])
 	}
 
 	for frame := range s.out {
@@ -202,7 +215,7 @@ func (s *session) sendLoop() {
 				log.Tracef("Adding random padding of length: %d", randLength.Int64())
 			}
 			binaryEncoding.PutUint16(randomPadding[headerSize:], uint16(randLength.Int64()))
-			coalesce(randomPadding[:fullHeaderSize+int(randLength.Int64())])
+			coalesce(randomPadding[:dataHeaderSize+int(randLength.Int64())])
 		}
 
 		// Write coalesced data out
@@ -264,8 +277,8 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		Conn:    s,
 		session: s,
 		pool:    s.pool,
-		rb:      newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
 		sb:      newSendBuffer(defaultHeader, s.out, s.windowSize),
+		rb:      newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
 	}
 	s.streams[id] = c
 	s.mx.Unlock()
