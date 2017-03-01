@@ -7,6 +7,10 @@ import (
 	"math/big"
 	"net"
 	"sync"
+	"time"
+
+	"github.com/getlantern/ema"
+	"github.com/getlantern/mtime"
 )
 
 // session encapsulates the multiplexing of streams onto a single "physical"
@@ -18,20 +22,24 @@ type session struct {
 	decrypt       func([]byte)                 // decrypt in place
 	encrypt       func(dst []byte, src []byte) // encrypt to a destination
 	clientInitMsg []byte
+	isClient      bool
 	pool          BufferPool
 	out           chan []byte
+	echoOut       chan []byte
 	streams       map[uint16]*stream
 	closed        map[uint16]bool
 	connCh        chan net.Conn
 	beforeClose   func(*session)
+	emaRTT        *ema.EMA
 	mx            sync.RWMutex
 }
 
 // startSession starts a session on the given net.Conn using the given transmit
 // windowSize and pool. If connCh is provided, the session will notify of new
 // streams as they are opened. If beforeClose is provided, the session will use
-// it to notify when it's about to close.
-func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt func([]byte), encrypt func(dst []byte, src []byte), clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
+// it to notify when it's about to close. If clientInitMsg is provided, this
+// message will be sent with the first frame sent in this session.
+func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval time.Duration, decrypt func([]byte), encrypt func(dst []byte, src []byte), clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) *session {
 	s := &session{
 		Conn:          conn,
 		windowSize:    windowSize,
@@ -39,19 +47,26 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, decrypt func([]
 		decrypt:       decrypt,
 		encrypt:       encrypt,
 		clientInitMsg: clientInitMsg,
+		isClient:      clientInitMsg != nil,
 		pool:          pool,
 		out:           make(chan []byte),
+		echoOut:       make(chan []byte, 10),
 		streams:       make(map[uint16]*stream),
 		closed:        make(map[uint16]bool),
 		connCh:        connCh,
 		beforeClose:   beforeClose,
 	}
-	go s.sendLoop()
+	if s.isClient {
+		s.emaRTT = ema.NewDuration(0, 0.01) // use a low alpha to give old values influence
+	}
+	go s.sendLoop(pingInterval)
 	go s.recvLoop()
 	return s
 }
 
 func (s *session) recvLoop() {
+	echoTS := make([]byte, tsSize)
+
 	for {
 		b := s.pool.getForFrame()
 		// First read header
@@ -68,7 +83,7 @@ func (s *session) recvLoop() {
 		case frameTypePadding:
 			isPadding = true
 		case frameTypeACK:
-			c, open := s.getOrCreateStream(id)
+			c, open, _ := s.getOrCreateStream(id)
 			if !open {
 				// Stream was already closed, ignore
 				continue
@@ -95,6 +110,24 @@ func (s *session) recvLoop() {
 				c.close(false, nil, nil)
 			}
 			continue
+		case frameTypePing:
+			e := echo()
+			_, err = io.ReadFull(s, e[:tsSize])
+			if err != nil {
+				s.onSessionError(err, nil)
+				return
+			}
+			s.echoOut <- e
+			continue
+		case frameTypeEcho:
+			_, err = io.ReadFull(s, echoTS)
+			if err != nil {
+				s.onSessionError(err, nil)
+				return
+			}
+			rtt := mtime.Now().Sub(mtime.Instant(binaryEncoding.Uint64(echoTS)))
+			s.emaRTT.UpdateDuration(rtt)
+			continue
 		}
 
 		// Read frame length
@@ -119,16 +152,20 @@ func (s *session) recvLoop() {
 			continue
 		}
 
-		c, open := s.getOrCreateStream(id)
+		c, open, created := s.getOrCreateStream(id)
 		if !open {
 			// Stream was already closed, ignore
 			continue
 		}
 		c.rb.submit(b)
+		if created {
+			// immediately send an empty ACK on newly created streams for timing
+			c.rb.sendACK()
+		}
 	}
 }
 
-func (s *session) sendLoop() {
+func (s *session) sendLoop(pingInterval time.Duration) {
 	// Use maxFrameSize * 2 for coalesce buffer to avoid having to grow it
 	coalesceBuffer := make([]byte, maxFrameSize*2)
 	coalescedBytes := 0
@@ -160,8 +197,8 @@ func (s *session) sendLoop() {
 		case frameTypeRST:
 			// RST frames only contain the header
 			return
-		case frameTypeACK:
-			// ACK frames also have a bytes field
+		case frameTypeACK, frameTypePing, frameTypeEcho:
+			// ACK, ping and echo frames also have additional data
 			coalesce(frame[:dataLen])
 			return
 		default:
@@ -174,7 +211,9 @@ func (s *session) sendLoop() {
 		}
 	}
 
-	for frame := range s.out {
+	lastPing := time.Now()
+
+	onFrame := func(frame []byte) {
 		// Coalesce pending writes. This helps with performance and blocking
 		// resistence by combining packets.
 		coalescedBytes = 0
@@ -194,9 +233,22 @@ func (s *session) sendLoop() {
 				// pending frame immediately available, add it
 				bufferFrame(frame)
 				coalesced++
+			case frame = <-s.echoOut:
+				// pending echo immediately available, add it
+				bufferFrame(frame)
+				coalesced++
 			default:
 				// no more frames immediately available
 				break coalesceLoop
+			}
+		}
+
+		if pingInterval > 0 {
+			now := time.Now()
+			if now.Sub(lastPing) > pingInterval {
+				bufferFrame(ping())
+				coalesced++
+				lastPing = now
 			}
 		}
 
@@ -223,6 +275,20 @@ func (s *session) sendLoop() {
 		if err != nil {
 			s.onSessionError(nil, err)
 			return
+		}
+	}
+
+	for {
+		select {
+		case frame, more := <-s.out:
+			onFrame(frame)
+			if !more {
+				// closed
+				return
+			}
+		case frame := <-s.echoOut:
+			// note - echos get their own channel so they don't queue behind data
+			onFrame(frame)
 		}
 	}
 }
@@ -259,17 +325,17 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	}
 }
 
-func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
+func (s *session) getOrCreateStream(id uint16) (c *stream, open bool, created bool) {
 	s.mx.Lock()
-	c := s.streams[id]
+	c = s.streams[id]
 	if c != nil {
 		s.mx.Unlock()
-		return c, true
+		return c, true, false
 	}
 	closed := s.closed[id]
 	if closed {
 		s.mx.Unlock()
-		return nil, false
+		return nil, false, false
 	}
 
 	defaultHeader := newHeader(frameTypeData, id)
@@ -285,7 +351,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	if s.connCh != nil {
 		s.connCh <- c
 	}
-	return c, true
+	return c, true, true
 }
 
 func (s *session) Read(b []byte) (int, error) {
@@ -303,6 +369,10 @@ func (s *session) Close() error {
 
 func (s *session) Wrapped() net.Conn {
 	return s.Conn
+}
+
+func (s *session) EMARTT() time.Duration {
+	return s.emaRTT.GetDuration()
 }
 
 // TODO: do we need a way to close a session/physical connection intentionally?

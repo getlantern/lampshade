@@ -3,7 +3,10 @@ package lampshade
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/getlantern/mtime"
 )
 
 // a stream is a multiplexed net.Conn operating on top of a physical net.Conn
@@ -19,6 +22,7 @@ type stream struct {
 	closed        bool
 	finalReadErr  error
 	finalWriteErr error
+	firstWrite    uint64
 	mx            sync.RWMutex
 }
 
@@ -42,6 +46,9 @@ func (c *stream) Write(b []byte) (int, error) {
 	closed := c.closed
 	writeDeadline := c.writeDeadline
 	finalWriteErr := c.finalWriteErr
+	if c.firstWrite == 0 {
+		atomic.StoreUint64(&c.firstWrite, uint64(mtime.Now()))
+	}
 	c.mx.RUnlock()
 	if finalWriteErr != nil {
 		return 0, finalWriteErr

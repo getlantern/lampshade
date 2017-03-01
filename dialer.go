@@ -5,18 +5,10 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"time"
 )
 
-// Dialer is like StreamDialer but provides a function that returns a net.Conn
-// for easier integration with code that needs this interface.
-func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (net.Conn, error) {
-	d := StreamDialer(windowSize, maxPadding, maxStreamsPerConn, pool, cipherCode, serverPublicKey, dial)
-	return func() (net.Conn, error) {
-		return d()
-	}
-}
-
-// StreamDialer wraps the given dial function with support for multiplexing. The
+// NewDialer wraps the given dial function with support for multiplexing. The
 // returned Streams look and act just like regular net.Conns. The Dialer
 // will multiplex everything over a single net.Conn until it encounters a read
 // or write error on that Conn. At that point, it will dial a new conn for
@@ -33,6 +25,8 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 // maxStreamsPerConn - limits the number of streams per physical connection. If
 //                     <=0, defaults to max uint16.
 //
+// pingInterval - how frequently to ping to calculate RTT, set to 0 to disable.
+//
 // pool - BufferPool to use
 //
 // cipherCode - which cipher to use, 1 = AES128 in CTR mode, 2 = ChaCha20
@@ -40,23 +34,23 @@ func Dialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool Buffe
 // serverPublicKey - if provided, this dialer will use encryption.
 //
 // dial - function to open an underlying connection.
-func StreamDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) func() (Stream, error) {
+func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInterval time.Duration, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) Dialer {
 	if windowSize <= 0 {
 		windowSize = defaultWindowSize
 	}
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}
-	d := &dialer{
+	return &dialer{
 		doDial:           dial,
 		windowSize:       windowSize,
 		maxPadding:       maxPadding,
 		maxStreamPerConn: maxStreamsPerConn,
+		pingInterval:     pingInterval,
 		pool:             pool,
 		cipherCode:       cipherCode,
 		serverPublicKey:  serverPublicKey,
 	}
-	return d.dial
 }
 
 type dialer struct {
@@ -64,6 +58,7 @@ type dialer struct {
 	windowSize       int
 	maxPadding       int
 	maxStreamPerConn uint16
+	pingInterval     time.Duration
 	pool             BufferPool
 	cipherCode       Cipher
 	serverPublicKey  *rsa.PublicKey
@@ -72,7 +67,11 @@ type dialer struct {
 	mx               sync.Mutex
 }
 
-func (d *dialer) dial() (Stream, error) {
+func (d *dialer) Dial() (net.Conn, error) {
+	return d.DialStream()
+}
+
+func (d *dialer) DialStream() (Stream, error) {
 	d.mx.Lock()
 	current := d.current
 	idsExhausted := false
@@ -94,8 +93,18 @@ func (d *dialer) dial() (Stream, error) {
 	d.id++
 	d.mx.Unlock()
 
-	c, _ := current.getOrCreateStream(id)
+	c, _, _ := current.getOrCreateStream(id)
 	return c, nil
+}
+
+func (d *dialer) EMARTT() time.Duration {
+	var rtt time.Duration
+	d.mx.Lock()
+	if d.current != nil {
+		rtt = d.current.EMARTT()
+	}
+	d.mx.Unlock()
+	return rtt
 }
 
 func (d *dialer) startSession() (*session, error) {
@@ -138,7 +147,7 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}
 
-	d.current = startSession(conn, d.windowSize, d.maxPadding, decrypt, encrypt, clientInitMsg, d.pool, nil, d.sessionClosed)
+	d.current = startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, decrypt, encrypt, clientInitMsg, d.pool, nil, d.sessionClosed)
 	return d.current, nil
 }
 

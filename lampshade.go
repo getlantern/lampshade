@@ -103,9 +103,10 @@
 //
 //     +--------------+-----------+----------+--------+
 //     |              |           | Data Len |        |
-//     | Message Type | Stream ID | / Frames |  Data  |
+//     |              |           | / Frames |  Data  |
+//     | Message Type | Stream ID |   / TS   |        |
 //     +--------------+-----------+----------+--------+
-//     |      1       |     2     |    2/4   | <=1443 |
+//     |      1       |     2     |   2/4/8  | <=1443 |
 //     +--------------+-----------+----------+--------+
 //
 //     Message Type - indicates the message type.
@@ -114,6 +115,8 @@
 //       1 = padding
 //       2 = ack
 //       3 = rst (close connection)
+//       4 = ping
+//       5 = echo
 //
 //     Stream ID - unique identifier for stream. (last field for ack and rst)
 //
@@ -122,6 +125,9 @@
 //     Frames   - number of frames being ACK'd (for type ACK)
 //
 //     Data     - data (for type "data" or "padding")
+//
+//     TS       - time at which ping packet was sent as 64-bit uint
+//                (for type "ping" and "echo")
 //
 // Padding:
 //
@@ -158,6 +164,7 @@ import (
 	"time"
 
 	"github.com/getlantern/golog"
+	"github.com/getlantern/mtime"
 	"github.com/oxtoacart/bpool"
 )
 
@@ -167,6 +174,7 @@ const (
 	versionSize    = 1
 	winSize        = 4
 	maxPaddingSize = 1
+	tsSize         = 8
 
 	protocolVersion1 = 1
 
@@ -182,8 +190,9 @@ const (
 	lenSize        = 2
 	dataHeaderSize = headerSize + lenSize
 
-	maxFrameSize = coalesceThreshold
-	ackFrameSize = headerSize + winSize
+	maxFrameSize  = coalesceThreshold
+	ackFrameSize  = headerSize + winSize
+	pingFrameSize = headerSize + tsSize
 
 	// MaxDataLen is the maximum length of data in a lampshade frame.
 	MaxDataLen = maxFrameSize - dataHeaderSize
@@ -193,6 +202,8 @@ const (
 	frameTypePadding = 1
 	frameTypeACK     = 2
 	frameTypeRST     = 3
+	frameTypePing    = 4
+	frameTypeEcho    = 5
 
 	ackRatio          = 10 // ack every 1/10 of window
 	defaultWindowSize = 2 * 1024 * 1024 / MaxDataLen
@@ -233,9 +244,26 @@ func (e *netError) Error() string   { return e.err }
 func (e *netError) Timeout() bool   { return e.timeout }
 func (e *netError) Temporary() bool { return e.temporary }
 
+// StatsTracking is an interface for anything that tracks stats.
+type StatsTracking interface {
+	// EMARTT() gets the estimated moving average RTT for all streams created by
+	// this Dialer.
+	EMARTT() time.Duration
+}
+
+// Dialer is a dialer
+type Dialer interface {
+	StatsTracking
+
+	Dial() (net.Conn, error)
+
+	DialStream() (Stream, error)
+}
+
 // Session is a wrapper around a net.Conn that supports multiplexing.
 type Session interface {
 	net.Conn
+	StatsTracking
 
 	// Wrapped() exposes access to the net.Conn that's wrapped by this Session.
 	Wrapped() net.Conn
@@ -327,4 +355,19 @@ func ackWithFrames(header []byte, frames int32) []byte {
 	ack[winSize] = frameTypeACK
 	binaryEncoding.PutUint32(ack, uint32(frames))
 	return ack
+}
+
+func ping() []byte {
+	// note - header and ts field are reversed to match the usual format for
+	// data frames
+	ping := make([]byte, pingFrameSize)
+	ping[tsSize] = frameTypePing
+	binaryEncoding.PutUint64(ping, uint64(mtime.Now()))
+	return ping
+}
+
+func echo() []byte {
+	echo := make([]byte, pingFrameSize)
+	echo[tsSize] = frameTypeEcho
+	return echo
 }
