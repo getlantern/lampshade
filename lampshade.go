@@ -156,6 +156,16 @@
 //       to buffer, the server can adjust the window by sending an ACK with a
 //       negative value
 //
+// Ping Protocol:
+//
+//   Dialers can optionally be configured to use an embedded ping/echo protocol
+//   to maintain an exponential moving average round trip time (RTT). The ping
+//   protocol is similar to an ICMP ping. The client sends a ping packet
+//   containing a 64-bit unsigned integer timestamp and the server responds with
+//   an echo containing that same timestamp. For blocking resistance and
+//   efficiency, pings are only sent with other outgoing frames. If there's no
+//   outgoing traffic, no pings will be sent.
+//
 package lampshade
 
 import (

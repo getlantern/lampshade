@@ -93,17 +93,18 @@ func (d *dialer) DialStream() (Stream, error) {
 	d.id++
 	d.mx.Unlock()
 
-	c, _, _ := current.getOrCreateStream(id)
+	c, _ := current.getOrCreateStream(id)
 	return c, nil
 }
 
 func (d *dialer) EMARTT() time.Duration {
 	var rtt time.Duration
 	d.mx.Lock()
-	if d.current != nil {
-		rtt = d.current.EMARTT()
-	}
+	current := d.current
 	d.mx.Unlock()
+	if current != nil {
+		rtt = current.EMARTT()
+	}
 	return rtt
 }
 

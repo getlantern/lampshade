@@ -49,7 +49,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		clientInitMsg: clientInitMsg,
 		isClient:      clientInitMsg != nil,
 		pool:          pool,
-		out:           make(chan []byte),
+		out:           make(chan []byte, 1000), // TODO: maybe make this buffer depth smarter
 		echoOut:       make(chan []byte, 10),
 		streams:       make(map[uint16]*stream),
 		closed:        make(map[uint16]bool),
@@ -57,7 +57,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		beforeClose:   beforeClose,
 	}
 	if s.isClient {
-		s.emaRTT = ema.NewDuration(0, 0.01) // use a low alpha to give old values influence
+		s.emaRTT = ema.NewDuration(0, 0.5)
 	}
 	go s.sendLoop(pingInterval)
 	go s.recvLoop()
@@ -83,7 +83,7 @@ func (s *session) recvLoop() {
 		case frameTypePadding:
 			isPadding = true
 		case frameTypeACK:
-			c, open, _ := s.getOrCreateStream(id)
+			c, open := s.getOrCreateStream(id)
 			if !open {
 				// Stream was already closed, ignore
 				continue
@@ -152,16 +152,12 @@ func (s *session) recvLoop() {
 			continue
 		}
 
-		c, open, created := s.getOrCreateStream(id)
+		c, open := s.getOrCreateStream(id)
 		if !open {
 			// Stream was already closed, ignore
 			continue
 		}
 		c.rb.submit(b)
-		if created {
-			// immediately send an empty ACK on newly created streams for timing
-			c.rb.sendACK()
-		}
 	}
 }
 
@@ -325,17 +321,17 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	}
 }
 
-func (s *session) getOrCreateStream(id uint16) (c *stream, open bool, created bool) {
+func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	s.mx.Lock()
-	c = s.streams[id]
+	c := s.streams[id]
 	if c != nil {
 		s.mx.Unlock()
-		return c, true, false
+		return c, true
 	}
 	closed := s.closed[id]
 	if closed {
 		s.mx.Unlock()
-		return nil, false, false
+		return nil, false
 	}
 
 	defaultHeader := newHeader(frameTypeData, id)
@@ -351,7 +347,7 @@ func (s *session) getOrCreateStream(id uint16) (c *stream, open bool, created bo
 	if s.connCh != nil {
 		s.connCh <- c
 	}
-	return c, true, true
+	return c, true
 }
 
 func (s *session) Read(b []byte) (int, error) {
