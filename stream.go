@@ -16,6 +16,7 @@ type stream struct {
 	sb            *sendBuffer
 	readDeadline  time.Time
 	writeDeadline time.Time
+	writeTimer    *time.Timer
 	closed        bool
 	finalReadErr  error
 	finalWriteErr error
@@ -68,13 +69,11 @@ func (c *stream) Write(b []byte) (int, error) {
 	if writeDeadline.Before(now) {
 		return 0, ErrTimeout
 	}
-	timer := time.NewTimer(writeDeadline.Sub(now))
+	c.writeTimer.Reset(writeDeadline.Sub(now))
 	select {
 	case c.sb.in <- b:
-		timer.Stop()
 		return len(b), nil
-	case <-timer.C:
-		timer.Stop()
+	case <-c.writeTimer.C:
 		return 0, ErrTimeout
 	}
 }
@@ -115,6 +114,7 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 	if didClose {
 		c.rb.close()
 		c.sb.close(sendRST)
+		c.writeTimer.Stop()
 	}
 	return nil
 }

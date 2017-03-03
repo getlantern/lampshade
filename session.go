@@ -13,6 +13,10 @@ import (
 	"github.com/getlantern/mtime"
 )
 
+const (
+	oneYear = 8760 * time.Hour
+)
+
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
 type session struct {
@@ -47,7 +51,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		encrypt:       encrypt,
 		clientInitMsg: clientInitMsg,
 		pool:          pool,
-		out:           make(chan []byte),
+		out:           make(chan []byte, windowSize*10), // TODO: maybe make this tunable
 		echoOut:       make(chan []byte, 10),
 		streams:       make(map[uint16]*stream),
 		closed:        make(map[uint16]bool),
@@ -335,11 +339,12 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 
 	defaultHeader := newHeader(frameTypeData, id)
 	c = &stream{
-		Conn:    s,
-		session: s,
-		pool:    s.pool,
-		sb:      newSendBuffer(defaultHeader, s.out, s.windowSize),
-		rb:      newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
+		Conn:       s,
+		session:    s,
+		pool:       s.pool,
+		sb:         newSendBuffer(defaultHeader, s.out, s.windowSize),
+		rb:         newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
+		writeTimer: time.NewTimer(oneYear),
 	}
 	s.streams[id] = c
 	s.mx.Unlock()
