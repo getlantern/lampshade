@@ -22,7 +22,6 @@ type session struct {
 	decrypt       func([]byte)                 // decrypt in place
 	encrypt       func(dst []byte, src []byte) // encrypt to a destination
 	clientInitMsg []byte
-	isClient      bool
 	pool          BufferPool
 	out           chan []byte
 	echoOut       chan []byte
@@ -47,16 +46,16 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		decrypt:       decrypt,
 		encrypt:       encrypt,
 		clientInitMsg: clientInitMsg,
-		isClient:      clientInitMsg != nil,
 		pool:          pool,
-		out:           make(chan []byte, 1000), // TODO: maybe make this buffer depth smarter
+		out:           make(chan []byte),
 		echoOut:       make(chan []byte, 10),
 		streams:       make(map[uint16]*stream),
 		closed:        make(map[uint16]bool),
 		connCh:        connCh,
 		beforeClose:   beforeClose,
 	}
-	if s.isClient {
+	isClient := clientInitMsg != nil
+	if isClient {
 		s.emaRTT = ema.NewDuration(0, 0.5)
 	}
 	go s.sendLoop(pingInterval)

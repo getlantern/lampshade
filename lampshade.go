@@ -126,8 +126,8 @@
 //
 //     Data     - data (for type "data" or "padding")
 //
-//     TS       - time at which ping packet was sent as 64-bit uint
-//                (for type "ping" and "echo")
+//     TS       - time at which ping packet was sent as 64-bit uint nanoseconds
+//                since epoch (for type "ping" and "echo")
 //
 // Padding:
 //
