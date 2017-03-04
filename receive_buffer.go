@@ -62,19 +62,13 @@ func (buf *receiveBuffer) submit(frame []byte) {
 // As long as some data was already queued, read will not wait for more data
 // even if b has not yet been filled.
 func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err error) {
-	defer func() {
-		if buf.unacked >= buf.ackInterval {
-			buf.ack <- ackWithFrames(buf.defaultHeader, int32(buf.unacked))
-			buf.unacked = 0
-		}
-	}()
-
 	for {
 		n := copy(b, buf.current)
 		buf.current = buf.current[n:]
 		totalN += n
 		if n == len(b) {
 			// nothing more to copy
+			buf.ackIfNecessary()
 			return
 		}
 
@@ -87,6 +81,7 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 			if !open && frame == nil {
 				// we've hit the end
 				err = io.EOF
+				buf.ackIfNecessary()
 				return
 			}
 			buf.onFrame(frame)
@@ -95,6 +90,7 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 			// nothing immediately available
 			if totalN > 0 {
 				// we've read something, return what we have
+				buf.ackIfNecessary()
 				return
 			}
 
@@ -106,6 +102,7 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				deadline = largeDeadline
 			} else if deadline.Before(now) {
 				// Deadline already past, don't bother doing anything
+				buf.ackIfNecessary()
 				return
 			}
 			timer := time.NewTimer(deadline.Sub(now))
@@ -114,6 +111,7 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				// Nothing read within deadline
 				err = ErrTimeout
 				timer.Stop()
+				buf.ackIfNecessary()
 				return
 			case frame, open := <-buf.in:
 				// Read next frame, continue loop
@@ -121,6 +119,7 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				if !open && frame == nil {
 					// we've hit the end
 					err = io.EOF
+					buf.ackIfNecessary()
 					return
 				}
 				buf.onFrame(frame)
@@ -128,6 +127,18 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 			}
 		}
 	}
+}
+
+// ackIfNecessary acks every buf.ackInterval
+func (buf *receiveBuffer) ackIfNecessary() {
+	if buf.unacked >= buf.ackInterval {
+		buf.sendACK()
+		buf.unacked = 0
+	}
+}
+
+func (buf *receiveBuffer) sendACK() {
+	buf.ack <- ackWithFrames(buf.defaultHeader, int32(buf.unacked))
 }
 
 func (buf *receiveBuffer) onFrame(frame []byte) {

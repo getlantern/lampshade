@@ -104,6 +104,6 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("Unable to initialize encryption cipher: %v", err)
 	}
-	startSession(conn, windowSize, maxPadding, decrypt, encrypt, nil, l.pool, l.connCh, nil)
+	startSession(conn, windowSize, maxPadding, 0, decrypt, encrypt, nil, l.pool, l.connCh, nil)
 	return nil
 }
