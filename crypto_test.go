@@ -13,12 +13,28 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func TestInitAESCTR(t *testing.T) {
-	doTestInit(t, AES128CTR)
+func TestXOR(t *testing.T) {
+	iv := make([]byte, 12)
+	_, err := rand.Read(iv)
+	if !assert.NoError(t, err) {
+		return
+	}
+	t.Log(iv)
+
+	seq := make([]byte, 12)
+	binaryEncoding.PutUint64(seq[4:], 5)
+	t.Log(seq)
+
+	fastXORBytes(seq, seq, iv)
+	t.Log(seq)
 }
 
-func TestInitChaCha20(t *testing.T) {
-	doTestInit(t, ChaCha20)
+func TestInitAESGCM(t *testing.T) {
+	doTestInit(t, AES128GCM)
+}
+
+func TestInitChaCha20Poly1305(t *testing.T) {
+	doTestInit(t, ChaCha20Poly1305)
 }
 
 func doTestInit(t *testing.T, cipherCode Cipher) {
@@ -49,11 +65,11 @@ func TestCryptoPrototypeNoEncryption(t *testing.T) {
 }
 
 func TestCryptoPrototypeAESCTR(t *testing.T) {
-	doTestCryptoPrototype(t, AES128CTR)
+	doTestCryptoPrototype(t, AES128GCM)
 }
 
 func TestCryptoPrototypeChaCha20(t *testing.T) {
-	doTestCryptoPrototype(t, AES128CTR)
+	doTestCryptoPrototype(t, ChaCha20Poly1305)
 }
 
 func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
@@ -62,34 +78,44 @@ func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
 		return
 	}
 
-	clientEncrypt, err := newEncrypter(cipherCode, secret, sendIV)
+	clientEncrypt, err := newEncrypter2(cipherCode, secret, sendIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	clientDecrypt, err := newDecrypter(cipherCode, secret, recvIV)
+	clientDecrypt, err := newDecrypter2(cipherCode, secret, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	serverEncrypt, err := newEncrypter(cipherCode, secret, recvIV)
+	serverEncrypt, err := newEncrypter2(cipherCode, secret, recvIV)
 	if !assert.NoError(t, err) {
 		return
 	}
-	serverDecrypt, err := newDecrypter(cipherCode, secret, sendIV)
+	serverDecrypt, err := newDecrypter2(cipherCode, secret, sendIV)
 	if !assert.NoError(t, err) {
 		return
 	}
+
+	overhead := cipherCode.overhead()
 
 	// This scenario mimics and echo server
 	for _, msg := range []string{"hi", "1", "", "and some more stuff"} {
 		req := []byte(msg)
-		req2 := make([]byte, len(req))
-		req3 := make([]byte, len(req))
+		b := make([]byte, len(req))
 
-		clientEncrypt(req2, req)
-		serverDecrypt(req2)
-		serverEncrypt(req3, req2)
-		clientDecrypt(req3)
-		assert.Equal(t, msg, string(req3))
+		b = clientEncrypt(b, req)
+		assert.Equal(t, len(req)+overhead, len(b), msg)
+		b, err = serverDecrypt(b)
+		if !assert.NoError(t, err, msg) {
+			continue
+		}
+		assert.Equal(t, len(req), len(b), msg)
+		b = serverEncrypt(b, b)
+		assert.Equal(t, len(req)+overhead, len(b), msg)
+		b, err = clientDecrypt(b)
+		if !assert.NoError(t, err, msg) {
+			continue
+		}
+		assert.Equal(t, msg, string(b))
 	}
 }
 

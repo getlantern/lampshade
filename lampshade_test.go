@@ -376,7 +376,7 @@ func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, Dialer, *sync.
 		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 	}
 
-	dialer := NewDialer(windowSize, maxPadding, maxStreamsPerConn, testPingInterval, pool, AES128CTR, &pk.RSA().PublicKey, doDial)
+	dialer := NewDialer(windowSize, maxPadding, maxStreamsPerConn, testPingInterval, pool, AES128GCM, &pk.RSA().PublicKey, doDial)
 
 	return l, dialer, &wg, nil
 }
@@ -408,7 +408,7 @@ func TestConcurrency(t *testing.T) {
 		}
 	}()
 
-	dial := NewDialer(windowSize, maxPadding, 0, 15*time.Millisecond, NewBufferPool(100), ChaCha20, &pk.RSA().PublicKey, func() (net.Conn, error) {
+	dial := NewDialer(windowSize, maxPadding, 0, 15*time.Millisecond, NewBufferPool(100), ChaCha20Poly1305, &pk.RSA().PublicKey, func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	}).Dial
 
@@ -459,12 +459,12 @@ func BenchmarkThroughputLampshadeNoEncryption(b *testing.B) {
 	doBenchmarkThroughputLampshade(b, NoEncryption)
 }
 
-func BenchmarkThroughputLampshadeAES128CTR(b *testing.B) {
-	doBenchmarkThroughputLampshade(b, AES128CTR)
+func BenchmarkThroughputLampshadeAES128GCM(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, AES128GCM)
 }
 
-func BenchmarkThroughputLampshadeChaCha20(b *testing.B) {
-	doBenchmarkThroughputLampshade(b, ChaCha20)
+func BenchmarkThroughputLampshadeChaCha20Poly1305(b *testing.B) {
+	doBenchmarkThroughputLampshade(b, ChaCha20Poly1305)
 }
 
 func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
