@@ -124,6 +124,14 @@
 //
 //     MAC    - the MAC resulting from applying the AEAD to Pad and Frames.
 //
+// Encryption:
+//
+//   Session frames are encrypted using AEAD, either AES128_GCM or
+//   ChaCha20_Poly1305. The nonce for each message is derived from a
+//   session-level initialization vector XOR'ed with a frame sequence number,
+//   similar to how AES128_GCM works in TLS 1.3. See
+//   https://blog.cloudflare.com/tls-nonce-nse/.
+//
 // Padding:
 //
 //   - used only when there weren't enough pending writes to coalesce

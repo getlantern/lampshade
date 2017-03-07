@@ -41,6 +41,7 @@ func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInt
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   pingInterval: %v   cipher: %v", windowSize, maxPadding, maxStreamsPerConn, pingInterval, cipherCode)
 	return &dialer{
 		doDial:           dial,
 		windowSize:       windowSize,
