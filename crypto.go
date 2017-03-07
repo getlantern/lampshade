@@ -28,9 +28,7 @@ func (c Cipher) secretSize() int {
 
 func (c Cipher) ivSize() int {
 	switch c {
-	case AES128GCM:
-		return 12
-	case ChaCha20Poly1305:
+	case AES128GCM, ChaCha20Poly1305:
 		return 12
 	default:
 		return 1
@@ -39,9 +37,7 @@ func (c Cipher) ivSize() int {
 
 func (c Cipher) overhead() int {
 	switch c {
-	case AES128GCM:
-		return 16
-	case ChaCha20Poly1305:
+	case AES128GCM, ChaCha20Poly1305:
 		return 16
 	default:
 		return 0
@@ -61,8 +57,7 @@ func (c Cipher) String() string {
 	}
 }
 
-// cryptoSpec encodes all the secrets and initialization vectors used for a
-// session
+// cryptoSpec encodes all the crypto configuration for a session.
 type cryptoSpec struct {
 	cipherCode Cipher
 	secret     []byte

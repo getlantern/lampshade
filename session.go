@@ -76,7 +76,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 func (s *session) recvLoop() {
 	echoTS := make([]byte, tsSize)
 	lb := make([]byte, 2)
-	var sf []byte
+	var sessionFrame []byte
 
 	for {
 		// First read and decrypt length
@@ -89,24 +89,24 @@ func (s *session) recvLoop() {
 		l := int(binaryEncoding.Uint16(lb))
 
 		// Then read the session frame
-		if cap(sf) < l {
-			sf = make([]byte, l)
+		if cap(sessionFrame) < l {
+			sessionFrame = make([]byte, l)
 		}
-		sf = sf[:l]
-		_, err = io.ReadFull(s, sf)
+		sessionFrame = sessionFrame[:l]
+		_, err = io.ReadFull(s, sessionFrame)
 		if err != nil {
 			s.onSessionError(fmt.Errorf("Unable to read session frame: %v", err), nil)
 			return
 		}
 
 		// Decrypt session frame
-		sf, err = s.dataDecrypt(sf)
+		sessionFrame, err = s.dataDecrypt(sessionFrame)
 		if err != nil {
 			s.onSessionError(fmt.Errorf("Unable to decrypt session frame: %v", err), nil)
 			return
 		}
 
-		r := bytes.NewReader(sf)
+		r := bytes.NewReader(sessionFrame)
 
 		// Read stream frames
 	frameLoop:
@@ -258,7 +258,8 @@ func (s *session) sendLoop(pingInterval time.Duration) {
 		if s.clientInitMsg != nil {
 			// Lazily send client init message with first data, but don't encrypt
 			copy(sessionFrame, s.clientInitMsg)
-			startOfData = 2 + clientInitSize
+			// Push start of data right
+			startOfData += clientInitSize
 			s.clientInitMsg = nil
 		}
 		bufferFrame(frame)
@@ -318,13 +319,13 @@ func (s *session) sendLoop(pingInterval time.Duration) {
 		encryptedFramesData := s.dataEncrypt(framesData, framesData)
 		coalescedBytes = len(encryptedFramesData)
 
-		// Add length header
+		// Add length header before data
 		lenBuf := sessionFrame[startOfData-2:]
 		lenBuf = lenBuf[:2]
 		binaryEncoding.PutUint16(lenBuf, uint16(coalescedBytes))
 		s.metaEncrypt(lenBuf)
 
-		// Write coalesced data out
+		// Write session frame to wire
 		_, err := s.Write(sessionFrame[:startOfData+coalescedBytes])
 		if err != nil {
 			s.onSessionError(nil, err)

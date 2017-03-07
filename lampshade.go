@@ -77,7 +77,7 @@
 //     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
 //     | Version | Win | Max Pad | Cipher | Secret | Send IV1 | Send IV2 | Recv IV1 | Recv IV2 |
 //     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
-//     |    1    |  4  |    1    |    1   |   32   |    12    |   16/12  |    12    |   16/12  |
+//     |    1    |  4  |    1    |    1   |   32   |    12    |    12    |    12    |    12    |
 //     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
 //
 //       Version - the version of the protocol (currently 1)
@@ -92,24 +92,22 @@
 //                      2 = AES128_GCM
 //                      3 = ChaCha20_poly1305
 //
-//       Secret     - 256 bits of secret
+//       Secret     - 256 bits of secret (used for Len and Frames encryption)
 //
-//       Send IV1/2 - initialization vector for messages from client -> server,
-//                    128 bits for AES_CTR, 96 bits for ChaCha20. IV1 is used
-//                    for encrypting the frame length and IV2 is used for
-//                    encrypting the data.
+//       Send IV1/2 - 96 bits of initialization vector. IV1 is used for
+//                    encrypting the frame length and IV2 is used for encrypting
+//                    the data.
 //
-//       Recv IV1/2 - initialization vector for messages from server -> client,
-//                    128 bits for AES_CTR, 96 bits for ChaCha20. IV1 is used
-//                    for encrypting the frame length and IV2 is used for
-//                    encrypting the data.
+//       Recv IV1/2 - 96 bits of initialization vector. IV1 is used for
+//                    decrypting the frame length and IV2 is used for decrypting
+//                    the data.
 //
 // Session Framing:
 //
 //   Where possible, lampshade coalesces multiple stream-level frames into a
 //   single session-level frame on the wire. The session-level frames follow
-//   the below format. Len is encrypted using ChaCha20. Pad and Frames are
-//   encrypted using the configured AEAD and the resulting MAC is stored in MAC.
+//   the below format. Len is encrypted using ChaCha20. Frames is encrypted
+//   using the configured AEAD and the resulting MAC is stored in MAC.
 //
 //     +-----+---------+------+
 //     | Len |  Frames |  MAC |
@@ -126,11 +124,13 @@
 //
 // Encryption:
 //
-//   Session frames are encrypted using AEAD, either AES128_GCM or
-//   ChaCha20_Poly1305. The nonce for each message is derived from a
-//   session-level initialization vector XOR'ed with a frame sequence number,
-//   similar to how AES128_GCM works in TLS 1.3. See
-//   https://blog.cloudflare.com/tls-nonce-nse/.
+//   The Len field is encrypted using ChaCha20 as a stream cipher initialized
+//   with a session-level initialization vector for obfuscation purposes. The
+//   Frames field is encrypted using AEAD (either AES128_GCM or
+//   ChaCha20_Poly1305) in order to prevent chosen ciphertext attacks. The nonce
+//   for each message is derived from a session-level initialization vector
+//   XOR'ed with a frame sequence number, similar AES128_GCM in TLS 1.3
+//   (see https://blog.cloudflare.com/tls-nonce-nse/).
 //
 // Padding:
 //
