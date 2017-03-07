@@ -92,7 +92,7 @@ func (s *session) recvLoop() {
 		if cap(sf) < l {
 			sf = make([]byte, l)
 		}
-		sf = sf[:0]
+		sf = sf[:l]
 		_, err = io.ReadFull(s, sf)
 		if err != nil {
 			s.onSessionError(fmt.Errorf("Unable to read session frame: %v", err), nil)
@@ -109,21 +109,26 @@ func (s *session) recvLoop() {
 		r := bytes.NewReader(sf)
 
 		// Read stream frames
+	frameLoop:
 		for {
 			b := s.pool.getForFrame()
 			// First read header
 			header := b[:headerSize]
 			_, err := io.ReadFull(r, header)
 			if err != nil {
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
+					// We're done reading the session frame
+					break frameLoop
+				}
 				s.onSessionError(fmt.Errorf("Unable to read header: %v", err), nil)
 				return
 			}
 
 			frameType, id := frameTypeAndID(header)
-			isPadding := false
 			switch frameType {
 			case frameTypePadding:
-				isPadding = true
+				// Padding is always at the end of a session frame, so stop processing
+				break frameLoop
 			case frameTypeACK:
 				c, open := s.getOrCreateStream(id)
 				if !open {
@@ -189,11 +194,6 @@ func (s *session) recvLoop() {
 				return
 			}
 
-			if isPadding {
-				// don't do anything with padding after we've read it
-				continue
-			}
-
 			c, open := s.getOrCreateStream(id)
 			if !open {
 				// Stream was already closed, ignore
@@ -206,8 +206,7 @@ func (s *session) recvLoop() {
 
 func (s *session) sendLoop(pingInterval time.Duration) {
 	// Pre-allocate a sessionFrame
-	rawSessionFrame := make([]byte, maxSessionFrameSize)
-	var sessionFrame []byte
+	sessionFrame := make([]byte, maxSessionFrameSize)
 	coalescedBytes := 0
 	startOfData := 2
 
@@ -217,7 +216,7 @@ func (s *session) sendLoop(pingInterval time.Duration) {
 	maxPadding := int(s.maxPadding.Int64())
 
 	coalesce := func(b []byte) {
-		sessionFrame = append(sessionFrame, b...)
+		copy(sessionFrame[startOfData+coalescedBytes:], b)
 		coalescedBytes += len(b)
 	}
 
@@ -258,15 +257,15 @@ func (s *session) sendLoop(pingInterval time.Duration) {
 		coalesced := 1
 		if s.clientInitMsg != nil {
 			// Lazily send client init message with first data, but don't encrypt
-			copy(rawSessionFrame[2:], s.clientInitMsg)
+			copy(sessionFrame, s.clientInitMsg)
 			startOfData = 2 + clientInitSize
 			s.clientInitMsg = nil
 		}
-		sessionFrame = rawSessionFrame[startOfData:]
 		bufferFrame(frame)
 
 	coalesceLoop:
-		for coalescedBytes+startOfData < coalesceThreshold {
+		// Coalesce as much as possible without exceeding maxSessionFrameSize
+		for startOfData+coalescedBytes+maxHMACSize+maxFrameSize < maxSessionFrameSize {
 			select {
 			case frame = <-s.out:
 				// pending frame immediately available, add it
@@ -303,24 +302,30 @@ func (s *session) sendLoop(pingInterval time.Duration) {
 				s.onSessionError(nil, randErr)
 				return
 			}
+			l := int(randLength.Int64())
 			if log.IsTraceEnabled() {
-				log.Tracef("Adding random padding of length: %d", randLength.Int64())
+				log.Tracef("Adding random padding of length: %d", l)
 			}
-			coalescedBytes += int(randLength.Int64())
-			sessionFrame = sessionFrame[:coalescedBytes]
+			for i := startOfData + coalescedBytes; i < startOfData+coalescedBytes+l; i++ {
+				// Zero out area of random padding
+				sessionFrame[i] = 0
+			}
+			coalescedBytes += l
 		}
 
+		framesData := sessionFrame[startOfData : startOfData+coalescedBytes]
 		// Encrypt session frame
-		s.dataEncrypt(sessionFrame, sessionFrame)
+		encryptedFramesData := s.dataEncrypt(framesData, framesData)
+		coalescedBytes = len(encryptedFramesData)
 
 		// Add length header
-		lenBuf := rawSessionFrame[startOfData-2:]
+		lenBuf := sessionFrame[startOfData-2:]
 		lenBuf = lenBuf[:2]
 		binaryEncoding.PutUint16(lenBuf, uint16(coalescedBytes))
 		s.metaEncrypt(lenBuf)
 
 		// Write coalesced data out
-		_, err := s.Write(rawSessionFrame[:startOfData+coalescedBytes])
+		_, err := s.Write(sessionFrame[:startOfData+coalescedBytes])
 		if err != nil {
 			s.onSessionError(nil, err)
 			return

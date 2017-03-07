@@ -88,9 +88,9 @@
 //
 //       Cipher     - specifies the AEAD cipher used for encrypting frames
 //
-//                    1 = None
-//                    2 = AES128_GCM
-//                    3 = ChaCha20_poly1305
+//                      1 = None
+//                      2 = AES128_GCM
+//                      3 = ChaCha20_poly1305
 //
 //       Secret     - 256 bits of secret
 //
@@ -136,34 +136,35 @@
 //
 //   Stream frames follow the below format:
 //
-//     +--------------+-----------+----------+--------+
-//     |              |           | Data Len |        |
-//     |              |           | / Frames |  Data  |
-//     | Message Type | Stream ID |   / TS   |        |
-//     +--------------+-----------+----------+--------+
-//     |      1       |     2     |   2/4/8  | <=1443 |
-//     +--------------+-----------+----------+--------+
+//     +------------+-----------+----------+--------+
+//     |            |           | Data Len |        |
+//     |            |           | / Frames |  Data  |
+//     | Frame Type | Stream ID |   / TS   |        |
+//     +------------+-----------+----------+--------+
+//     |      1     |     2     |   2/4/8  | <=1443 |
+//     +------------+-----------+----------+--------+
 //
-//     Message Type - indicates the message type.
+//     Frame Type - indicates the message type.
 //
-//                    0   = data
+//                      0 = padding
+//                      1 = data
 //                    252 = ping
 //                    253 = echo
 //                    254 = ack
 //                    255 = rst (close connection)
 //
-//     Stream ID    - unique identifier for stream. (last field for ack and rst)
+//     Stream ID  - unique identifier for stream. (last field for ack and rst)
 //
-//     Data Len     - length of data (for type "data" or "padding")
+//     Data Len   - length of data (for type "data" or "padding")
 //
-//     Frames       - number of frames being ACK'd (for type ACK)
+//     Frames     - number of frames being ACK'd (for type ACK)
 //
-//     Data         - data (for type "data" or "padding")
+//     Data       - data (for type "data" or "padding")
 //
-//     TS           - time at which ping packet was sent as 64-bit uint. This is
-//                    a passthrough value, so the client implementation can put
-//                    whatever it wants in here in order to calculate its RTT.
-//                    (for type "ping" and "echo")
+//     TS         - time at which ping packet was sent as 64-bit uint. This is
+//                  a passthrough value, so the client implementation can put
+//                  whatever it wants in here in order to calculate its RTT.
+//                  (for type "ping" and "echo")
 //
 // Flow Control:
 //
@@ -240,11 +241,10 @@ const (
 
 	maxHMACSize         = 16
 	maxSessionFrameSize = (2 << 15) - 1
-	maxSessionDataSize  = maxSessionFrameSize - lenSize - maxHMACSize
 
 	// frame types
-	frameTypeData    = 0
-	frameTypePadding = 1
+	frameTypePadding = 0
+	frameTypeData    = 1
 	frameTypePing    = 252
 	frameTypeEcho    = 253
 	frameTypeACK     = 254

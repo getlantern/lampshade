@@ -123,26 +123,6 @@ func initCrypto(cipherCode Cipher) (*rsa.PrivateKey, *rsa.PublicKey, *cryptoSpec
 	return pk.RSA(), &pk.RSA().PublicKey, cs, err
 }
 
-func BenchmarkCipherAES128_CTR(b *testing.B) {
-	key := make([]byte, 16)
-	rand.Read(key)
-	iv := make([]byte, 16)
-	rand.Read(iv)
-	data := make([]byte, MaxDataLen)
-	rand.Read(data)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		b.Fatal(err)
-	}
-	encrypt := cipher.NewCTR(block, iv)
-	decrypt := cipher.NewCTR(block, iv)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		encrypt.XORKeyStream(data, data)
-		decrypt.XORKeyStream(data, data)
-	}
-}
-
 func BenchmarkCipherChaCha20(b *testing.B) {
 	key := make([]byte, chacha20.KeySize)
 	rand.Read(key)
