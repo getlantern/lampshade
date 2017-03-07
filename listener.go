@@ -92,18 +92,10 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	if err != nil {
 		return fmt.Errorf("Unable to read client init msg: %v", err)
 	}
-	windowSize, maxPadding, cipherCode, secret, sendIV, recvIV, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
+	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
 		return fmt.Errorf("Unable to decode client init msg: %v", err)
 	}
-	decrypt, err := newDecrypter(cipherCode, secret, sendIV)
-	if err != nil {
-		return fmt.Errorf("Unable to initialize decryption cipher: %v", err)
-	}
-	encrypt, err := newEncrypter(cipherCode, secret, recvIV)
-	if err != nil {
-		return fmt.Errorf("Unable to initialize encryption cipher: %v", err)
-	}
-	startSession(conn, windowSize, maxPadding, 0, decrypt, encrypt, nil, l.pool, l.connCh, nil)
+	startSession(conn, windowSize, maxPadding, 0, cs.reversed(), nil, l.pool, l.connCh, nil)
 	return nil
 }

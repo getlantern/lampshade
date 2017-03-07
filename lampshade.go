@@ -75,24 +75,24 @@
 //   RSA OAEP using the server's PK:
 //
 //     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
-//     | Version | Win | Max Pad | Cipher | Secret | Send IV1 | Recv IV2 | Send IV2 | Recv IV2 |
+//     | Version | Win | Max Pad | Cipher | Secret | Send IV1 | Send IV2 | Recv IV1 | Recv IV2 |
 //     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
-//     |    1    |  4  |    1    |    1   | 16/32  |   16/12  |   16/12  |   16/12  |   16/12  |
+//     |    1    |  4  |    1    |    1   |   32   |    12    |   16/12  |    12    |   16/12  |
 //     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
 //
 //       Version - the version of the protocol (currently 1)
 //
-//       Win     - transmit window size in # of frames
+//       Win        - transmit window size in # of frames
 //
-//       Max Pad - maximum random padding
+//       Max Pad    - maximum random padding
 //
-//       Cipher  - specifies the AEAD cipher used for encrypting frames
+//       Cipher     - specifies the AEAD cipher used for encrypting frames
 //
-//                 1 = None
-//                 2 = AES128_GCM
-//                 3 = ChaCha20_poly1305
+//                    1 = None
+//                    2 = AES128_GCM
+//                    3 = ChaCha20_poly1305
 //
-//       Secret  - 128 bits of secret for AES128_CTR, 256 bits for ChaCha20
+//       Secret     - 256 bits of secret
 //
 //       Send IV1/2 - initialization vector for messages from client -> server,
 //                    128 bits for AES_CTR, 96 bits for ChaCha20. IV1 is used
@@ -111,16 +111,14 @@
 //   the below format. Len is encrypted using ChaCha20. Pad and Frames are
 //   encrypted using the configured AEAD and the resulting MAC is stored in MAC.
 //
-//     +-----+-----+---------+------+
-//     | Len | Pad |  Frames |  MAC |
-//     +-----+-----+---------+------+
-//     |  2  |  1  | <=65517 | <=?? |
-//     +-----+-----+---------+------+
+//     +-----+---------+------+
+//     | Len |  Frames |  MAC |
+//     +-----+---------+------+
+//     |  2  | <=65518 | <=?? |
+//     +-----+---------+------+
 //
 //     Len    - the length of the frame, not including the Len field itself.
 //              This is encrypted using ChaCha20 to obscure the actual value.
-//
-//     Pad    - the amount of padding (may be 0)
 //
 //     Frames - the data of the app frames. Padding appears at the end of this.
 //
@@ -154,18 +152,18 @@
 //                    254 = ack
 //                    255 = rst (close connection)
 //
-//     Stream ID - unique identifier for stream. (last field for ack and rst)
+//     Stream ID    - unique identifier for stream. (last field for ack and rst)
 //
-//     Data Len  - length of data (for type "data" or "padding")
+//     Data Len     - length of data (for type "data" or "padding")
 //
-//     Frames    - number of frames being ACK'd (for type ACK)
+//     Frames       - number of frames being ACK'd (for type ACK)
 //
-//     Data      - data (for type "data" or "padding")
+//     Data         - data (for type "data" or "padding")
 //
-//     TS        - time at which ping packet was sent as 64-bit uint. This is a
-//                passthrough value, so the client implementation can put
-//                whatever it wants in here in order to calculate its RTT.
-//                (for type "ping" and "echo")
+//     TS           - time at which ping packet was sent as 64-bit uint. This is
+//                    a passthrough value, so the client implementation can put
+//                    whatever it wants in here in order to calculate its RTT.
+//                    (for type "ping" and "echo")
 //
 // Flow Control:
 //
@@ -215,6 +213,8 @@ const (
 	winSize        = 4
 	maxPaddingSize = 1
 	tsSize         = 8
+	maxSecretSize  = 32
+	metaIVSize     = 12
 
 	protocolVersion1 = 1
 
@@ -237,6 +237,10 @@ const (
 
 	// MaxDataLen is the maximum length of data in a lampshade frame.
 	MaxDataLen = maxFrameSize - dataHeaderSize
+
+	maxHMACSize         = 16
+	maxSessionFrameSize = (2 << 15) - 1
+	maxSessionDataSize  = maxSessionFrameSize - lenSize - maxHMACSize
 
 	// frame types
 	frameTypeData    = 0

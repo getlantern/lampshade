@@ -38,26 +38,28 @@ func TestInitChaCha20Poly1305(t *testing.T) {
 }
 
 func doTestInit(t *testing.T, cipherCode Cipher) {
-	privateKey, publicKey, secret, sendIV, recvIV, err := initCrypto(cipherCode)
+	privateKey, publicKey, cs, err := initCrypto(cipherCode)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, cipherCode, secret, sendIV, recvIV)
+	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, cs)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	_windowSize, _maxPadding, _cipherCode, _secret, _sendIV, _recvIV, err := decodeClientInitMsg(privateKey, msg)
+	_windowSize, _maxPadding, _cs, err := decodeClientInitMsg(privateKey, msg)
 	if !assert.NoError(t, err) {
 		return
 	}
 	assert.Equal(t, windowSize, _windowSize)
 	assert.Equal(t, maxPadding, _maxPadding)
-	assert.Equal(t, cipherCode, _cipherCode)
-	assert.EqualValues(t, secret, _secret)
-	assert.EqualValues(t, sendIV, _sendIV)
-	assert.EqualValues(t, recvIV, _recvIV)
+	assert.Equal(t, cs.cipherCode, _cs.cipherCode)
+	assert.EqualValues(t, cs.secret, _cs.secret)
+	assert.EqualValues(t, cs.metaSendIV, _cs.metaSendIV)
+	assert.EqualValues(t, cs.dataSendIV, _cs.dataSendIV)
+	assert.EqualValues(t, cs.metaRecvIV, _cs.metaRecvIV)
+	assert.EqualValues(t, cs.dataRecvIV, _cs.dataRecvIV)
 }
 
 func TestCryptoPrototypeNoEncryption(t *testing.T) {
@@ -73,24 +75,16 @@ func TestCryptoPrototypeChaCha20(t *testing.T) {
 }
 
 func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
-	_, _, secret, sendIV, recvIV, err := initCrypto(cipherCode)
+	_, _, cs, err := initCrypto(cipherCode)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	clientEncrypt, err := newEncrypter2(cipherCode, secret, sendIV)
+	_, clientEncrypt, _, clientDecrypt, err := cs.crypters()
 	if !assert.NoError(t, err) {
 		return
 	}
-	clientDecrypt, err := newDecrypter2(cipherCode, secret, recvIV)
-	if !assert.NoError(t, err) {
-		return
-	}
-	serverEncrypt, err := newEncrypter2(cipherCode, secret, recvIV)
-	if !assert.NoError(t, err) {
-		return
-	}
-	serverDecrypt, err := newDecrypter2(cipherCode, secret, sendIV)
+	_, serverEncrypt, _, serverDecrypt, err := cs.reversed().crypters()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -119,28 +113,14 @@ func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
 	}
 }
 
-func initCrypto(cipherCode Cipher) (*rsa.PrivateKey, *rsa.PublicKey, []byte, []byte, []byte, error) {
+func initCrypto(cipherCode Cipher) (*rsa.PrivateKey, *rsa.PublicKey, *cryptoSpec, error) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	secret, err := newSecret(cipherCode)
-	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-
-	sendIV, err := newIV(cipherCode)
-	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-
-	recvIV, err := newIV(cipherCode)
-	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-
-	return pk.RSA(), &pk.RSA().PublicKey, secret, sendIV, recvIV, nil
+	cs, err := newCryptoSpec(cipherCode)
+	return pk.RSA(), &pk.RSA().PublicKey, cs, err
 }
 
 func BenchmarkCipherAES128_CTR(b *testing.B) {
