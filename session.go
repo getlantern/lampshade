@@ -64,8 +64,8 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		lastPing:         time.Now(),
 		sendSessionFrame: make([]byte, maxSessionFrameSize), // Pre-allocate a sessionFrame for sending
 		sendLengthBuffer: make([]byte, lenSize),             // pre-allocate buffer for length to avoid extra allocations
-		out:              make(chan []byte, windowSize*10),  // TODO: maybe make this tunable
-		echoOut:          make(chan []byte, 10),
+		out:              make(chan []byte),
+		echoOut:          make(chan []byte),
 		streams:          make(map[uint16]*stream),
 		closed:           make(map[uint16]bool),
 		connCh:           connCh,
