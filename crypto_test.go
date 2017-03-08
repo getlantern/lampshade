@@ -22,11 +22,14 @@ func TestXOR(t *testing.T) {
 	t.Log(iv)
 
 	seq := make([]byte, 12)
-	binaryEncoding.PutUint64(seq[4:], 5)
-	t.Log(seq)
-
-	fastXORBytes(seq, seq, iv)
-	t.Log(seq)
+	out1 := make([]byte, 12)
+	out2 := make([]byte, 12)
+	for i := 0; i < 1024; i++ {
+		binaryEncoding.PutUint64(seq[4:], uint64(i))
+		fastXORBytes(out1, seq, iv)
+		fastXORBytes(out2, iv, seq)
+		assert.EqualValues(t, out1, out2)
+	}
 }
 
 func TestInitAESGCM(t *testing.T) {

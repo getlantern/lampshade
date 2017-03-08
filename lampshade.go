@@ -220,7 +220,6 @@ const (
 	clientInitSize = 256
 	versionSize    = 1
 	winSize        = 4
-	maxPaddingSize = 1
 	tsSize         = 8
 	maxSecretSize  = 32
 	metaIVSize     = 12
@@ -247,7 +246,6 @@ const (
 	// MaxDataLen is the maximum length of data in a lampshade frame.
 	MaxDataLen = maxFrameSize - dataHeaderSize
 
-	maxHMACSize         = 16
 	maxSessionFrameSize = (2 << 15) - 1
 
 	// frame types

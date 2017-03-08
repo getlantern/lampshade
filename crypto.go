@@ -15,6 +15,15 @@ import (
 // Cipher specifies a stream cipher
 type Cipher byte
 
+func (c Cipher) valid() bool {
+	switch c {
+	case AES128GCM, ChaCha20Poly1305, NoEncryption:
+		return true
+	default:
+		return false
+	}
+}
+
 func (c Cipher) secretSize() int {
 	switch c {
 	case AES128GCM:
@@ -289,6 +298,9 @@ func decodeClientInitMsg(serverPrivateKey *rsa.PrivateKey, msg []byte) (windowSi
 	_cipherCode, pt := consume(pt, 1)
 	cs = &cryptoSpec{}
 	cs.cipherCode = Cipher(_cipherCode[0])
+	if !cs.cipherCode.valid() {
+		return 0, 0, nil, fmt.Errorf("Unknown cipher code: %d", cs.cipherCode)
+	}
 	ivSize := cs.cipherCode.ivSize()
 	cs.secret, pt = consume(pt, maxSecretSize)
 	cs.metaSendIV, pt = consume(pt, metaIVSize)

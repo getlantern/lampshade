@@ -22,22 +22,28 @@ const (
 // net.Conn.
 type session struct {
 	net.Conn
-	windowSize    int
-	maxPadding    *big.Int
-	metaDecrypt   func([]byte) // decrypt in place
-	metaEncrypt   func([]byte) // encrypt in place
-	dataDecrypt   func([]byte) ([]byte, error)
-	dataEncrypt   func(dst []byte, src []byte) []byte
-	clientInitMsg []byte
-	pool          BufferPool
-	out           chan []byte
-	echoOut       chan []byte
-	streams       map[uint16]*stream
-	closed        map[uint16]bool
-	connCh        chan net.Conn
-	beforeClose   func(*session)
-	emaRTT        *ema.EMA
-	mx            sync.RWMutex
+	windowSize       int
+	maxPadding       *big.Int
+	paddingEnabled   bool
+	cipherOverhead   int
+	metaDecrypt      func([]byte) // decrypt in place
+	metaEncrypt      func([]byte) // encrypt in place
+	dataDecrypt      func([]byte) ([]byte, error)
+	dataEncrypt      func(dst []byte, src []byte) []byte
+	clientInitMsg    []byte
+	pool             BufferPool
+	pingInterval     time.Duration
+	lastPing         time.Time
+	sendSessionFrame []byte
+	sendLengthBuffer []byte
+	out              chan []byte
+	echoOut          chan []byte
+	streams          map[uint16]*stream
+	closed           map[uint16]bool
+	connCh           chan net.Conn
+	beforeClose      func(*session)
+	emaRTT           *ema.EMA
+	mx               sync.RWMutex
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -47,17 +53,23 @@ type session struct {
 // with the first frame sent in this session.
 func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
-		Conn:          conn,
-		windowSize:    windowSize,
-		maxPadding:    big.NewInt(int64(maxPadding)),
-		clientInitMsg: clientInitMsg,
-		pool:          pool,
-		out:           make(chan []byte, windowSize*10), // TODO: maybe make this tunable
-		echoOut:       make(chan []byte, 10),
-		streams:       make(map[uint16]*stream),
-		closed:        make(map[uint16]bool),
-		connCh:        connCh,
-		beforeClose:   beforeClose,
+		Conn:             conn,
+		windowSize:       windowSize,
+		maxPadding:       big.NewInt(int64(maxPadding)),
+		paddingEnabled:   maxPadding > 0,
+		cipherOverhead:   cs.cipherCode.overhead(),
+		clientInitMsg:    clientInitMsg,
+		pool:             pool,
+		pingInterval:     pingInterval,
+		lastPing:         time.Now(),
+		sendSessionFrame: make([]byte, maxSessionFrameSize), // Pre-allocate a sessionFrame for sending
+		sendLengthBuffer: make([]byte, lenSize),             // pre-allocate buffer for length to avoid extra allocations
+		out:              make(chan []byte, windowSize*10),  // TODO: maybe make this tunable
+		echoOut:          make(chan []byte, 10),
+		streams:          make(map[uint16]*stream),
+		closed:           make(map[uint16]bool),
+		connCh:           connCh,
+		beforeClose:      beforeClose,
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -68,25 +80,25 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 	if isClient {
 		s.emaRTT = ema.NewDuration(0, 0.5)
 	}
-	go s.sendLoop(pingInterval)
+	go s.sendLoop()
 	go s.recvLoop()
 	return s, nil
 }
 
 func (s *session) recvLoop() {
 	echoTS := make([]byte, tsSize)
-	lb := make([]byte, 2)
+	lengthBuffer := make([]byte, lenSize)
 	var sessionFrame []byte
 
 	for {
 		// First read and decrypt length
-		_, err := io.ReadFull(s, lb)
+		_, err := io.ReadFull(s, lengthBuffer)
 		if err != nil {
 			s.onSessionError(fmt.Errorf("Unable to read length: %v", err), nil)
 			return
 		}
-		s.metaDecrypt(lb)
-		l := int(binaryEncoding.Uint16(lb))
+		s.metaDecrypt(lengthBuffer)
+		l := int(binaryEncoding.Uint16(lengthBuffer))
 
 		// Then read the session frame
 		if cap(sessionFrame) < l {
@@ -141,7 +153,7 @@ func (s *session) recvLoop() {
 					s.onSessionError(err, nil)
 					return
 				}
-				ackedFrames := int(int32(binaryEncoding.Uint32(_ackedFrames)))
+				ackedFrames := int(binaryEncoding.Uint32(_ackedFrames))
 				c.sb.window.add(ackedFrames)
 				continue
 			case frameTypeRST:
@@ -204,148 +216,147 @@ func (s *session) recvLoop() {
 	}
 }
 
-func (s *session) sendLoop(pingInterval time.Duration) {
-	// Pre-allocate a sessionFrame
-	sessionFrame := make([]byte, maxSessionFrameSize)
-	coalescedBytes := 0
-	startOfData := 2
-
-	// pre-allocate buffer for length to avoid extra allocations
-	lengthBuffer := make([]byte, lenSize)
-
-	maxPadding := int(s.maxPadding.Int64())
-
-	coalesce := func(b []byte) {
-		copy(sessionFrame[startOfData+coalescedBytes:], b)
-		coalescedBytes += len(b)
-	}
-
-	bufferFrame := func(frame []byte) {
-		dataLen := len(frame) - headerSize
-		if dataLen > MaxDataLen {
-			panic(fmt.Sprintf("Data length of %d exceeds maximum allowed of %d", dataLen, MaxDataLen))
-		}
-		header := frame[dataLen:]
-		coalesce(header)
-		switch frameType(header) {
-		case frameTypeRST:
-			// RST frames only contain the header
-			return
-		case frameTypeACK, frameTypePing, frameTypeEcho:
-			// ACK, ping and echo frames also have additional data
-			coalesce(frame[:dataLen])
-			return
-		default:
-			// data frame
-			binaryEncoding.PutUint16(lengthBuffer, uint16(dataLen))
-			coalesce(lengthBuffer)
-			coalesce(frame[:dataLen])
-			// Put frame back in pool
-			s.pool.Put(frame[:maxFrameSize])
-		}
-	}
-
-	lastPing := time.Now()
-
-	onFrame := func(frame []byte) {
-		// Reserve space for header in sessionFrame
-		startOfData = 2
-
-		// Coalesce pending writes. This helps with performance and blocking
-		// resistence by combining packets.
-		coalescedBytes = 0
-		coalesced := 1
-		if s.clientInitMsg != nil {
-			// Lazily send client init message with first data, but don't encrypt
-			copy(sessionFrame, s.clientInitMsg)
-			// Push start of data right
-			startOfData += clientInitSize
-			s.clientInitMsg = nil
-		}
-		bufferFrame(frame)
-
-	coalesceLoop:
-		// Coalesce as much as possible without exceeding maxSessionFrameSize
-		for startOfData+coalescedBytes+maxHMACSize+maxFrameSize < maxSessionFrameSize {
-			select {
-			case frame = <-s.out:
-				// pending frame immediately available, add it
-				bufferFrame(frame)
-				coalesced++
-			case frame = <-s.echoOut:
-				// pending echo immediately available, add it
-				bufferFrame(frame)
-				coalesced++
-			default:
-				// no more frames immediately available
-				break coalesceLoop
-			}
-		}
-
-		if pingInterval > 0 {
-			now := time.Now()
-			if now.Sub(lastPing) > pingInterval {
-				bufferFrame(ping())
-				coalesced++
-				lastPing = now
-			}
-		}
-
-		if log.IsTraceEnabled() {
-			log.Tracef("Coalesced %d for total of %d", coalesced, coalescedBytes)
-		}
-
-		needsPadding := maxPadding > 0 && coalesced == 1 && coalescedBytes+startOfData < coalesceThreshold
-		if needsPadding {
-			// Add random padding whenever we failed to coalesce
-			randLength, randErr := rand.Int(rand.Reader, s.maxPadding)
-			if randErr != nil {
-				s.onSessionError(nil, randErr)
-				return
-			}
-			l := int(randLength.Int64())
-			if log.IsTraceEnabled() {
-				log.Tracef("Adding random padding of length: %d", l)
-			}
-			for i := startOfData + coalescedBytes; i < startOfData+coalescedBytes+l; i++ {
-				// Zero out area of random padding
-				sessionFrame[i] = 0
-			}
-			coalescedBytes += l
-		}
-
-		framesData := sessionFrame[startOfData : startOfData+coalescedBytes]
-		// Encrypt session frame
-		encryptedFramesData := s.dataEncrypt(framesData, framesData)
-		coalescedBytes = len(encryptedFramesData)
-
-		// Add length header before data
-		lenBuf := sessionFrame[startOfData-2:]
-		lenBuf = lenBuf[:2]
-		binaryEncoding.PutUint16(lenBuf, uint16(coalescedBytes))
-		s.metaEncrypt(lenBuf)
-
-		// Write session frame to wire
-		_, err := s.Write(sessionFrame[:startOfData+coalescedBytes])
-		if err != nil {
-			s.onSessionError(nil, err)
-			return
-		}
-	}
-
+func (s *session) sendLoop() {
 	for {
 		select {
 		case frame, more := <-s.out:
-			onFrame(frame)
+			s.send(frame)
 			if !more {
 				// closed
 				return
 			}
 		case frame := <-s.echoOut:
 			// note - echos get their own channel so they don't queue behind data
-			onFrame(frame)
+			s.send(frame)
 		}
 	}
+}
+
+func (s *session) send(frame []byte) {
+	snd := &sender{
+		session:        s,
+		coalescedBytes: 0,
+		coalesced:      1,
+		startOfData:    lenSize, // Reserve space for header in sessionFrame
+	}
+	snd.send(frame)
+}
+
+type sender struct {
+	*session
+	coalescedBytes int
+	coalesced      int
+	startOfData    int
+}
+
+func (snd *sender) send(frame []byte) {
+	// Coalesce pending writes. This helps with performance and blocking
+	// resistence by combining packets.
+	if snd.clientInitMsg != nil {
+		// Lazily send client init message with first data, but don't encrypt
+		copy(snd.sendSessionFrame, snd.clientInitMsg)
+		// Push start of data right
+		snd.startOfData += clientInitSize
+		snd.clientInitMsg = nil
+	}
+	snd.bufferFrame(frame)
+	snd.coalesceAdditionalFrames()
+
+	if snd.pingInterval > 0 {
+		now := time.Now()
+		if now.Sub(snd.lastPing) > snd.pingInterval {
+			snd.bufferFrame(ping())
+			snd.lastPing = now
+		}
+	}
+
+	if log.IsTraceEnabled() {
+		log.Tracef("Coalesced %d for total of %d", snd.coalesced, snd.coalescedBytes)
+	}
+
+	needsPadding := snd.paddingEnabled && snd.coalesced == 1 && snd.coalescedBytes+snd.startOfData < coalesceThreshold
+	if needsPadding {
+		// Add random padding whenever we failed to coalesce
+		randLength, randErr := rand.Int(rand.Reader, snd.maxPadding)
+		if randErr != nil {
+			snd.onSessionError(nil, randErr)
+			return
+		}
+		l := int(randLength.Int64())
+		if log.IsTraceEnabled() {
+			log.Tracef("Adding random padding of length: %d", l)
+		}
+		for i := snd.startOfData + snd.coalescedBytes; i < snd.startOfData+snd.coalescedBytes+l; i++ {
+			// Zero out area of random padding
+			snd.sendSessionFrame[i] = 0
+		}
+		snd.coalescedBytes += l
+	}
+
+	framesData := snd.sendSessionFrame[snd.startOfData : snd.startOfData+snd.coalescedBytes]
+	// Encrypt session frame
+	encryptedFramesData := snd.dataEncrypt(framesData, framesData)
+	snd.coalescedBytes = len(encryptedFramesData)
+
+	// Add length header before data
+	lenBuf := snd.sendSessionFrame[snd.startOfData-lenSize:]
+	lenBuf = lenBuf[:lenSize]
+	binaryEncoding.PutUint16(lenBuf, uint16(snd.coalescedBytes))
+	snd.metaEncrypt(lenBuf)
+
+	// Write session frame to wire
+	_, err := snd.Write(snd.sendSessionFrame[:snd.startOfData+snd.coalescedBytes])
+	if err != nil {
+		snd.onSessionError(nil, err)
+	}
+}
+
+func (snd *sender) coalesceAdditionalFrames() {
+	// Coalesce enough to exceed coalesceThreshold
+	for snd.startOfData+snd.coalescedBytes+snd.cipherOverhead < coalesceThreshold {
+		select {
+		case frame := <-snd.out:
+			// pending frame immediately available, add it
+			snd.bufferFrame(frame)
+		case frame := <-snd.echoOut:
+			// pending echo immediately available, add it
+			snd.bufferFrame(frame)
+		default:
+			// no more frames immediately available
+			return
+		}
+	}
+}
+
+func (snd *sender) bufferFrame(frame []byte) {
+	snd.coalesced++
+	dataLen := len(frame) - headerSize
+	if dataLen > MaxDataLen {
+		panic(fmt.Sprintf("Data length of %d exceeds maximum allowed of %d", dataLen, MaxDataLen))
+	}
+	header := frame[dataLen:]
+	snd.coalesce(header)
+	switch frameType(header) {
+	case frameTypeRST:
+		// RST frames only contain the header
+		return
+	case frameTypeACK, frameTypePing, frameTypeEcho:
+		// ACK, ping and echo frames also have additional data
+		snd.coalesce(frame[:dataLen])
+		return
+	default:
+		// data frame
+		binaryEncoding.PutUint16(snd.sendLengthBuffer, uint16(dataLen))
+		snd.coalesce(snd.sendLengthBuffer)
+		snd.coalesce(frame[:dataLen])
+		// Put frame back in pool
+		snd.pool.Put(frame[:maxFrameSize])
+	}
+}
+
+func (snd *sender) coalesce(b []byte) {
+	copy(snd.sendSessionFrame[snd.startOfData+snd.coalescedBytes:], b)
+	snd.coalescedBytes += len(b)
 }
 
 func (s *session) onSessionError(readErr error, writeErr error) {
