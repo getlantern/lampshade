@@ -74,74 +74,109 @@
 //   To initialize a session, the client sends the below, encrypted using
 //   RSA OAEP using the server's PK:
 //
-//     +---------+-----+---------+--------+--------+---------+---------+
-//     | Version | Win | Max Pad | Cipher | Secret | Send IV | Recv IV |
-//     +---------+-----+---------+--------+--------+---------+---------+
-//     |    1    |  4  |    1    |    1   | 16/32  |  16/12  |  16/12  |
-//     +---------+-----+---------+--------+--------+---------+---------+
+//     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
+//     | Version | Win | Max Pad | Cipher | Secret | Send IV1 | Send IV2 | Recv IV1 | Recv IV2 |
+//     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
+//     |    1    |  4  |    1    |    1   |   32   |    12    |    12    |    12    |    12    |
+//     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
 //
 //       Version - the version of the protocol (currently 1)
 //
-//       Win     - transmit window size in # of frames
+//       Win        - transmit window size in # of frames
 //
-//       Max Pad - maximum random padding
+//       Max Pad    - maximum random padding
 //
-//       Cipher  - 1 = None, 2 = AES128_CTR, 3 = ChaCha20
+//       Cipher     - specifies the AEAD cipher used for encrypting frames
 //
-//       Secret  - 128 bits of secret for AES128_CTR, 256 bits for ChaCha20
+//                      1 = None
+//                      2 = AES128_GCM
+//                      3 = ChaCha20_poly1305
 //
-//       Send IV - initialization vector for messages from client -> server,
-//                 128 bits for AES_CTR, 96 bits for ChaCha20
+//       Secret     - 256 bits of secret (used for Len and Frames encryption)
 //
-//       Recv IV - initialization vector for messages from server -> client,
-//                 128 bits for AES_CTR, 96 bits for ChaCha20
+//       Send IV1/2 - 96 bits of initialization vector. IV1 is used for
+//                    encrypting the frame length and IV2 is used for encrypting
+//                    the data.
 //
-// Framing:
+//       Recv IV1/2 - 96 bits of initialization vector. IV1 is used for
+//                    decrypting the frame length and IV2 is used for decrypting
+//                    the data.
 //
-//   All frames are encrypted with AES128 in CTR mode, using the secret and IV
-//   sent in the Init Session message.
+// Session Framing:
 //
-//     +--------------+-----------+----------+--------+
-//     |              |           | Data Len |        |
-//     |              |           | / Frames |  Data  |
-//     | Message Type | Stream ID |   / TS   |        |
-//     +--------------+-----------+----------+--------+
-//     |      1       |     2     |   2/4/8  | <=1443 |
-//     +--------------+-----------+----------+--------+
+//   Where possible, lampshade coalesces multiple stream-level frames into a
+//   single session-level frame on the wire. The session-level frames follow
+//   the below format. Len is encrypted using ChaCha20. Frames is encrypted
+//   using the configured AEAD and the resulting MAC is stored in MAC.
 //
-//     Message Type - indicates the message type.
+//     +-----+---------+------+
+//     | Len |  Frames |  MAC |
+//     +-----+---------+------+
+//     |  2  | <=65518 | <=?? |
+//     +-----+---------+------+
 //
-//       0 = data
-//       1 = padding
-//       2 = ack
-//       3 = rst (close connection)
-//       4 = ping
-//       5 = echo
+//     Len    - the length of the frame, not including the Len field itself.
+//              This is encrypted using ChaCha20 to obscure the actual value.
 //
-//     Stream ID - unique identifier for stream. (last field for ack and rst)
+//     Frames - the data of the app frames. Padding appears at the end of this.
 //
-//     Data Len - length of data (for type "data" or "padding")
+//     MAC    - the MAC resulting from applying the AEAD to Pad and Frames.
 //
-//     Frames   - number of frames being ACK'd (for type ACK)
+// Encryption:
 //
-//     Data     - data (for type "data" or "padding")
-//
-//     TS       - time at which ping packet was sent as 64-bit uint. This is a
-//                passthrough value, so the client implementation can put
-//                whatever it wants in here in order to calculate its RTT.
-//                (for type "ping" and "echo")
+//   The Len field is encrypted using ChaCha20 as a stream cipher initialized
+//   with a session-level initialization vector for obfuscation purposes. The
+//   Frames field is encrypted using AEAD (either AES128_GCM or
+//   ChaCha20_Poly1305) in order to prevent chosen ciphertext attacks. The nonce
+//   for each message is derived from a session-level initialization vector
+//   XOR'ed with a frame sequence number, similar AES128_GCM in TLS 1.3
+//   (see https://blog.cloudflare.com/tls-nonce-nse/).
 //
 // Padding:
 //
 //   - used only when there weren't enough pending writes to coalesce
 //   - size varies randomly based on max pad parameter in init message
-//   - looks just like a standard frame, with empty data
+//   - consists of empty data
 //   - the "empty" data actually looks random on the wire since it's being
-//     encrypted with a stream cipher.
+//     encrypted with a cipher in streaming or GCM mode.
+//
+// Stream Framing:
+//
+//   Stream frames follow the below format:
+//
+//     +------------+-----------+----------+--------+
+//     |            |           | Data Len |        |
+//     |            |           | / Frames |  Data  |
+//     | Frame Type | Stream ID |   / TS   |        |
+//     +------------+-----------+----------+--------+
+//     |      1     |     2     |   2/4/8  | <=1443 |
+//     +------------+-----------+----------+--------+
+//
+//     Frame Type - indicates the message type.
+//
+//                      0 = padding
+//                      1 = data
+//                    252 = ping
+//                    253 = echo
+//                    254 = ack
+//                    255 = rst (close connection)
+//
+//     Stream ID  - unique identifier for stream. (last field for ack and rst)
+//
+//     Data Len   - length of data (for type "data" or "padding")
+//
+//     Frames     - number of frames being ACK'd (for type ACK)
+//
+//     Data       - data (for type "data" or "padding")
+//
+//     TS         - time at which ping packet was sent as 64-bit uint. This is
+//                  a passthrough value, so the client implementation can put
+//                  whatever it wants in here in order to calculate its RTT.
+//                  (for type "ping" and "echo")
 //
 // Flow Control:
 //
-//   Flow control is managed with windows similarly to HTTP/2.
+//   Stream-level flow control is managed using windows similarly to HTTP/2.
 //
 //     - windows are sized based on # of frames rather than # of bytes
 //     - both ends of a stream maintain a transmit window
@@ -185,43 +220,45 @@ const (
 	clientInitSize = 256
 	versionSize    = 1
 	winSize        = 4
-	maxPaddingSize = 1
 	tsSize         = 8
+	maxSecretSize  = 32
+	metaIVSize     = 12
 
 	protocolVersion1 = 1
 
 	// NoEncryption is no encryption
 	NoEncryption = 1
-	// AES128CTR is 128-bit AES in CTR mode
-	AES128CTR = 2
-	// ChaCha20 is 256-bit ChaCha20 with a 96-bit Nonce
-	ChaCha20 = 3
+	// AES128GCM is 128-bit AES in GCM mode
+	AES128GCM = 2
+	// ChaCha20Poly1305 is 256-bit ChaCha20Poly1305 with a 96-bit Nonce
+	ChaCha20Poly1305 = 3
 
 	// framing
 	headerSize     = 3
 	lenSize        = 2
 	dataHeaderSize = headerSize + lenSize
 
-	maxFrameSize  = coalesceThreshold
-	ackFrameSize  = headerSize + winSize
-	pingFrameSize = headerSize + tsSize
+	coalesceThreshold = 1448 // basically this is the practical TCP MSS for anything traversing Ethernet and using TCP timestamps
+	maxFrameSize      = coalesceThreshold
+	ackFrameSize      = headerSize + winSize
+	pingFrameSize     = headerSize + tsSize
 
 	// MaxDataLen is the maximum length of data in a lampshade frame.
 	MaxDataLen = maxFrameSize - dataHeaderSize
 
+	maxSessionFrameSize = (2 << 15) - 1
+
 	// frame types
-	frameTypeData    = 0
-	frameTypePadding = 1
-	frameTypeACK     = 2
-	frameTypeRST     = 3
-	frameTypePing    = 4
-	frameTypeEcho    = 5
+	frameTypePadding = 0
+	frameTypeData    = 1
+	frameTypePing    = 252
+	frameTypeEcho    = 253
+	frameTypeACK     = 254
+	frameTypeRST     = 255
 
 	ackRatio          = 10 // ack every 1/10 of window
 	defaultWindowSize = 2 * 1024 * 1024 / MaxDataLen
 	maxID             = (2 << 15) - 1
-
-	coalesceThreshold = 1448 // basically this is the practical TCP MSS for anything traversing Ethernet and using TCP timestamps
 )
 
 var (

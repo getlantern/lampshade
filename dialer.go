@@ -41,6 +41,7 @@ func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInt
 	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
 		maxStreamsPerConn = maxID
 	}
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   pingInterval: %v   cipher: %v", windowSize, maxPadding, maxStreamsPerConn, pingInterval, cipherCode)
 	return &dialer{
 		doDial:           dial,
 		windowSize:       windowSize,
@@ -115,40 +116,21 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, err
 	}
 
-	// Each session gets a new secret
-	secret, err := newSecret(d.cipherCode)
+	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to create AES secret: %v", err)
-	}
-
-	// Create initialization vector for sending to server
-	sendIV, err := newIV(d.cipherCode)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to create send initialization vector: %v", err)
-	}
-
-	// Create initialization vector for receiving from server
-	recvIV, err := newIV(d.cipherCode)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to create recv initialization vector: %v", err)
+		return nil, fmt.Errorf("Unable to create crypto spec for %v: %v", d.cipherCode, err)
 	}
 
 	// Generate the client init message
-	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, d.cipherCode, secret, sendIV, recvIV)
+	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, cs)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	decrypt, err := newDecrypter(d.cipherCode, secret, recvIV)
+	d.current, err = startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, cs, clientInitMsg, d.pool, nil, d.sessionClosed)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to initialize decryption cipher: %v", err)
+		return nil, fmt.Errorf("Unable to start session: %v", err)
 	}
-	encrypt, err := newEncrypter(d.cipherCode, secret, sendIV)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to initialize encryption cipher: %v", err)
-	}
-
-	d.current = startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, decrypt, encrypt, clientInitMsg, d.pool, nil, d.sessionClosed)
 	return d.current, nil
 }
 

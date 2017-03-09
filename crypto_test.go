@@ -13,35 +13,56 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func TestInitAESCTR(t *testing.T) {
-	doTestInit(t, AES128CTR)
+func TestXOR(t *testing.T) {
+	iv := make([]byte, 12)
+	_, err := rand.Read(iv)
+	if !assert.NoError(t, err) {
+		return
+	}
+	t.Log(iv)
+
+	seq := make([]byte, 12)
+	out1 := make([]byte, 12)
+	out2 := make([]byte, 12)
+	for i := 0; i < 1024; i++ {
+		binaryEncoding.PutUint64(seq[4:], uint64(i))
+		fastXORBytes(out1, seq, iv)
+		fastXORBytes(out2, iv, seq)
+		assert.EqualValues(t, out1, out2)
+	}
 }
 
-func TestInitChaCha20(t *testing.T) {
-	doTestInit(t, ChaCha20)
+func TestInitAESGCM(t *testing.T) {
+	doTestInit(t, AES128GCM)
+}
+
+func TestInitChaCha20Poly1305(t *testing.T) {
+	doTestInit(t, ChaCha20Poly1305)
 }
 
 func doTestInit(t *testing.T, cipherCode Cipher) {
-	privateKey, publicKey, secret, sendIV, recvIV, err := initCrypto(cipherCode)
+	privateKey, publicKey, cs, err := initCrypto(cipherCode)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, cipherCode, secret, sendIV, recvIV)
+	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, cs)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	_windowSize, _maxPadding, _cipherCode, _secret, _sendIV, _recvIV, err := decodeClientInitMsg(privateKey, msg)
+	_windowSize, _maxPadding, _cs, err := decodeClientInitMsg(privateKey, msg)
 	if !assert.NoError(t, err) {
 		return
 	}
 	assert.Equal(t, windowSize, _windowSize)
 	assert.Equal(t, maxPadding, _maxPadding)
-	assert.Equal(t, cipherCode, _cipherCode)
-	assert.EqualValues(t, secret, _secret)
-	assert.EqualValues(t, sendIV, _sendIV)
-	assert.EqualValues(t, recvIV, _recvIV)
+	assert.Equal(t, cs.cipherCode, _cs.cipherCode)
+	assert.EqualValues(t, cs.secret, _cs.secret)
+	assert.EqualValues(t, cs.metaSendIV, _cs.metaSendIV)
+	assert.EqualValues(t, cs.dataSendIV, _cs.dataSendIV)
+	assert.EqualValues(t, cs.metaRecvIV, _cs.metaRecvIV)
+	assert.EqualValues(t, cs.dataRecvIV, _cs.dataRecvIV)
 }
 
 func TestCryptoPrototypeNoEncryption(t *testing.T) {
@@ -49,92 +70,60 @@ func TestCryptoPrototypeNoEncryption(t *testing.T) {
 }
 
 func TestCryptoPrototypeAESCTR(t *testing.T) {
-	doTestCryptoPrototype(t, AES128CTR)
+	doTestCryptoPrototype(t, AES128GCM)
 }
 
 func TestCryptoPrototypeChaCha20(t *testing.T) {
-	doTestCryptoPrototype(t, AES128CTR)
+	doTestCryptoPrototype(t, ChaCha20Poly1305)
 }
 
 func doTestCryptoPrototype(t *testing.T, cipherCode Cipher) {
-	_, _, secret, sendIV, recvIV, err := initCrypto(cipherCode)
+	_, _, cs, err := initCrypto(cipherCode)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	clientEncrypt, err := newEncrypter(cipherCode, secret, sendIV)
+	_, clientEncrypt, _, clientDecrypt, err := cs.crypters()
 	if !assert.NoError(t, err) {
 		return
 	}
-	clientDecrypt, err := newDecrypter(cipherCode, secret, recvIV)
+	_, serverEncrypt, _, serverDecrypt, err := cs.reversed().crypters()
 	if !assert.NoError(t, err) {
 		return
 	}
-	serverEncrypt, err := newEncrypter(cipherCode, secret, recvIV)
-	if !assert.NoError(t, err) {
-		return
-	}
-	serverDecrypt, err := newDecrypter(cipherCode, secret, sendIV)
-	if !assert.NoError(t, err) {
-		return
-	}
+
+	overhead := cipherCode.overhead()
 
 	// This scenario mimics and echo server
 	for _, msg := range []string{"hi", "1", "", "and some more stuff"} {
 		req := []byte(msg)
-		req2 := make([]byte, len(req))
-		req3 := make([]byte, len(req))
+		b := make([]byte, len(req))
 
-		clientEncrypt(req2, req)
-		serverDecrypt(req2)
-		serverEncrypt(req3, req2)
-		clientDecrypt(req3)
-		assert.Equal(t, msg, string(req3))
+		b = clientEncrypt(b, req)
+		assert.Equal(t, len(req)+overhead, len(b), msg)
+		b, err = serverDecrypt(b)
+		if !assert.NoError(t, err, msg) {
+			continue
+		}
+		assert.Equal(t, len(req), len(b), msg)
+		b = serverEncrypt(b, b)
+		assert.Equal(t, len(req)+overhead, len(b), msg)
+		b, err = clientDecrypt(b)
+		if !assert.NoError(t, err, msg) {
+			continue
+		}
+		assert.Equal(t, msg, string(b))
 	}
 }
 
-func initCrypto(cipherCode Cipher) (*rsa.PrivateKey, *rsa.PublicKey, []byte, []byte, []byte, error) {
+func initCrypto(cipherCode Cipher) (*rsa.PrivateKey, *rsa.PublicKey, *cryptoSpec, error) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
-		return nil, nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 
-	secret, err := newSecret(cipherCode)
-	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-
-	sendIV, err := newIV(cipherCode)
-	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-
-	recvIV, err := newIV(cipherCode)
-	if err != nil {
-		return nil, nil, nil, nil, nil, err
-	}
-
-	return pk.RSA(), &pk.RSA().PublicKey, secret, sendIV, recvIV, nil
-}
-
-func BenchmarkCipherAES128_CTR(b *testing.B) {
-	key := make([]byte, 16)
-	rand.Read(key)
-	iv := make([]byte, 16)
-	rand.Read(iv)
-	data := make([]byte, MaxDataLen)
-	rand.Read(data)
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		b.Fatal(err)
-	}
-	encrypt := cipher.NewCTR(block, iv)
-	decrypt := cipher.NewCTR(block, iv)
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		encrypt.XORKeyStream(data, data)
-		decrypt.XORKeyStream(data, data)
-	}
+	cs, err := newCryptoSpec(cipherCode)
+	return pk.RSA(), &pk.RSA().PublicKey, cs, err
 }
 
 func BenchmarkCipherChaCha20(b *testing.B) {
