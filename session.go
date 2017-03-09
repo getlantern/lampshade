@@ -160,8 +160,7 @@ func (s *session) recvLoop() {
 				// Closing existing connection
 				s.mx.Lock()
 				c := s.streams[id]
-				delete(s.streams, id)
-				s.closed[id] = true
+				s.closeStream(id)
 				s.mx.Unlock()
 				if c != nil {
 					// Close, but don't send an RST back the other way since the other end is
@@ -240,6 +239,13 @@ func (s *session) send(frame []byte) {
 		startOfData:    lenSize, // Reserve space for header in sessionFrame
 	}
 	snd.send(frame)
+	if len(snd.closedStreams) > 0 {
+		s.mx.Lock()
+		for _, streamID := range snd.closedStreams {
+			s.closeStream(streamID)
+		}
+		s.mx.Unlock()
+	}
 }
 
 type sender struct {
@@ -247,6 +253,7 @@ type sender struct {
 	coalescedBytes int
 	coalesced      int
 	startOfData    int
+	closedStreams  []uint16
 }
 
 func (snd *sender) send(frame []byte) {
@@ -336,9 +343,11 @@ func (snd *sender) bufferFrame(frame []byte) {
 	}
 	header := frame[dataLen:]
 	snd.coalesce(header)
-	switch frameType(header) {
+	frameType, streamID := frameTypeAndID(header)
+	switch frameType {
 	case frameTypeRST:
 		// RST frames only contain the header
+		snd.closedStreams = append(snd.closedStreams, streamID)
 		return
 	case frameTypeACK, frameTypePing, frameTypeEcho:
 		// ACK, ping and echo frames also have additional data
@@ -419,6 +428,11 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		s.connCh <- c
 	}
 	return c, true
+}
+
+func (s *session) closeStream(id uint16) {
+	delete(s.streams, id)
+	s.closed[id] = true
 }
 
 func (s *session) Close() error {
