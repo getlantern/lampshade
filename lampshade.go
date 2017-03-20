@@ -27,7 +27,7 @@
 //
 // Protocol:
 //
-//   Seession initiation
+//   Session initiation
 //
 //      client --> client init --> server
 //
