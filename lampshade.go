@@ -107,7 +107,7 @@
 //     +-----+---------+------+
 //     | Len |  Frames |  MAC |
 //     +-----+---------+------+
-//     |  2  | <=65518 | <=?? |
+//     |  2  | <=65518 |  16  |
 //     +-----+---------+------+
 //
 //     Len    - the length of the frame, not including the Len field itself.
@@ -115,7 +115,7 @@
 //
 //     Frames - the data of the app frames. Padding appears at the end of this.
 //
-//     MAC    - the MAC resulting from applying the AEAD to Pad and Frames.
+//     MAC    - the MAC resulting from applying the AEAD to Frames.
 //
 // Encryption:
 //
