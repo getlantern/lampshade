@@ -34,7 +34,7 @@ import (
 // serverPublicKey - if provided, this dialer will use encryption.
 //
 // dial - function to open an underlying connection.
-func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInterval time.Duration, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey, dial func() (net.Conn, error)) Dialer {
+func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInterval time.Duration, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey) Dialer {
 	if windowSize <= 0 {
 		windowSize = defaultWindowSize
 	}
@@ -43,7 +43,6 @@ func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInt
 	}
 	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   pingInterval: %v   cipher: %v", windowSize, maxPadding, maxStreamsPerConn, pingInterval, cipherCode)
 	return &dialer{
-		doDial:           dial,
 		windowSize:       windowSize,
 		maxPadding:       maxPadding,
 		maxStreamPerConn: maxStreamsPerConn,
@@ -55,7 +54,6 @@ func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInt
 }
 
 type dialer struct {
-	doDial           func() (net.Conn, error)
 	windowSize       int
 	maxPadding       int
 	maxStreamPerConn uint16
@@ -68,11 +66,11 @@ type dialer struct {
 	mx               sync.Mutex
 }
 
-func (d *dialer) Dial() (net.Conn, error) {
-	return d.DialStream()
+func (d *dialer) Dial(dial DialFN) (net.Conn, error) {
+	return d.DialStream(dial)
 }
 
-func (d *dialer) DialStream() (Stream, error) {
+func (d *dialer) DialStream(dial DialFN) (Stream, error) {
 	d.mx.Lock()
 	current := d.current
 	idsExhausted := false
@@ -85,7 +83,7 @@ func (d *dialer) DialStream() (Stream, error) {
 	// TODO: support pooling of connections (i.e. keep multiple physical connections in flight)
 	if current == nil || idsExhausted {
 		var err error
-		current, err = d.startSession()
+		current, err = d.startSession(dial)
 		if err != nil {
 			return nil, err
 		}
@@ -109,8 +107,8 @@ func (d *dialer) EMARTT() time.Duration {
 	return rtt
 }
 
-func (d *dialer) startSession() (*session, error) {
-	conn, err := d.doDial()
+func (d *dialer) startSession(dial DialFN) (*session, error) {
+	conn, err := dial()
 	if err != nil {
 		d.mx.Unlock()
 		return nil, err

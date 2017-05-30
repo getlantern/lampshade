@@ -295,13 +295,16 @@ type StatsTracking interface {
 	EMARTT() time.Duration
 }
 
+// DialFN is a function that dials the server
+type DialFN func() (net.Conn, error)
+
 // Dialer is a dialer
 type Dialer interface {
 	StatsTracking
 
-	Dial() (net.Conn, error)
+	Dial(dial DialFN) (net.Conn, error)
 
-	DialStream() (Stream, error)
+	DialStream(dial DialFN) (Stream, error)
 }
 
 // Session is a wrapper around a net.Conn that supports multiplexing.
