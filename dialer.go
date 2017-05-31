@@ -25,6 +25,9 @@ import (
 // maxStreamsPerConn - limits the number of streams per physical connection. If
 //                     <=0, defaults to max uint16.
 //
+// idleInterval - if we haven't dialed any new connections within this interval,
+//                open a new physical connection on the next dial.
+//
 // pingInterval - how frequently to ping to calculate RTT, set to 0 to disable.
 //
 // pool - BufferPool to use
@@ -34,7 +37,7 @@ import (
 // serverPublicKey - if provided, this dialer will use encryption.
 //
 // dial - function to open an underlying connection.
-func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInterval time.Duration, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey) Dialer {
+func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, idleInterval time.Duration, pingInterval time.Duration, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey) Dialer {
 	if windowSize <= 0 {
 		windowSize = defaultWindowSize
 	}
@@ -46,6 +49,7 @@ func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, pingInt
 		windowSize:       windowSize,
 		maxPadding:       maxPadding,
 		maxStreamPerConn: maxStreamsPerConn,
+		idleInterval:     idleInterval,
 		pingInterval:     pingInterval,
 		pool:             pool,
 		cipherCode:       cipherCode,
@@ -57,11 +61,13 @@ type dialer struct {
 	windowSize       int
 	maxPadding       int
 	maxStreamPerConn uint16
+	idleInterval     time.Duration
 	pingInterval     time.Duration
 	pool             BufferPool
 	cipherCode       Cipher
 	serverPublicKey  *rsa.PublicKey
 	current          *session
+	lastDialed       time.Time
 	id               uint16
 	mx               sync.Mutex
 }
@@ -79,9 +85,18 @@ func (d *dialer) DialStream(dial DialFN) (Stream, error) {
 		idsExhausted = true
 		d.id = 0
 	}
+	idled := false
+	if d.idleInterval > 0 {
+		now := time.Now()
+		idled = now.Sub(d.lastDialed) > d.idleInterval
+		if idled {
+			log.Debugf("No new connections in %v, will start new session", d.idleInterval)
+		}
+		d.lastDialed = now
+	}
 
 	// TODO: support pooling of connections (i.e. keep multiple physical connections in flight)
-	if current == nil || idsExhausted {
+	if current == nil || idsExhausted || idled {
 		var err error
 		current, err = d.startSession(dial)
 		if err != nil {
