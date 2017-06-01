@@ -376,7 +376,14 @@ func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, Dialer, DialFN
 		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 	}
 
-	dialer := NewDialer(windowSize, maxPadding, maxStreamsPerConn, 0, testPingInterval, pool, AES128GCM, &pk.RSA().PublicKey)
+	dialer := NewDialer(&DialerOpts{
+		WindowSize:        windowSize,
+		MaxPadding:        maxPadding,
+		MaxStreamsPerConn: maxStreamsPerConn,
+		PingInterval:      testPingInterval,
+		Pool:              pool,
+		Cipher:            AES128GCM,
+		ServerPublicKey:   &pk.RSA().PublicKey})
 
 	return l, dialer, func() (net.Conn, error) {
 		return dialer.Dial(doDial)
@@ -410,7 +417,14 @@ func TestConcurrency(t *testing.T) {
 		}
 	}()
 
-	dial := NewDialer(windowSize, maxPadding, 0, 0, 15*time.Millisecond, NewBufferPool(100), ChaCha20Poly1305, &pk.RSA().PublicKey).Dial
+	dial := NewDialer(
+		&DialerOpts{
+			WindowSize:      windowSize,
+			MaxPadding:      maxPadding,
+			IdleInterval:    15 * time.Millisecond,
+			Pool:            NewBufferPool(100),
+			Cipher:          ChaCha20Poly1305,
+			ServerPublicKey: &pk.RSA().PublicKey}).Dial
 	doDial := func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	}
@@ -491,7 +505,12 @@ func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
 	}
 	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA())
 
-	conn, err := NewDialer(25, maxPadding, 0, 0, 0, NewBufferPool(100), cipherCode, &pk.RSA().PublicKey).Dial(func() (net.Conn, error) {
+	conn, err := NewDialer(&DialerOpts{
+		WindowSize:      25,
+		MaxPadding:      maxPadding,
+		Pool:            NewBufferPool(100),
+		Cipher:          cipherCode,
+		ServerPublicKey: &pk.RSA().PublicKey}).Dial(func() (net.Conn, error) {
 		return net.Dial("tcp", lst.Addr().String())
 	})
 	if err != nil {

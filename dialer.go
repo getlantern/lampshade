@@ -8,6 +8,35 @@ import (
 	"time"
 )
 
+// DialerOpts configures options for creating Dialers
+type DialerOpts struct {
+	// WindowSize - transmit window size in # of frames. If <= 0, defaults to 1250.
+	WindowSize int
+
+	// MaxPadding - maximum random padding to use when necessary.
+	MaxPadding int
+
+	// MaxStreamsPerConn - limits the number of streams per physical connection.
+	//                     If <=0, defaults to max uint16.
+	MaxStreamsPerConn uint16
+
+	// IdleInterval - If we haven't dialed any new connections within this
+	//                interval, open a new physical connection on the next dial.
+	IdleInterval time.Duration
+
+	// PingInterval - how frequently to ping to calculate RTT, set to 0 to disable
+	PingInterval time.Duration
+
+	// Pool - BufferPool to use
+	Pool BufferPool
+
+	// Cipher - which cipher to use, 1 = AES128 in CTR mode, 2 = ChaCha20
+	Cipher Cipher
+
+	// ServerPublicKey - if provided, this dialer will use encryption.
+	ServerPublicKey *rsa.PublicKey
+}
+
 // NewDialer wraps the given dial function with support for multiplexing. The
 // returned Streams look and act just like regular net.Conns. The Dialer
 // will multiplex everything over a single net.Conn until it encounters a read
@@ -17,43 +46,28 @@ import (
 //
 // If a new physical connection is needed but can't be established, the dialer
 // returns the underlying dial error.
-//
-// windowSize - transmit window size in # of frames. If <= 0, defaults to 1250.
-//
-// maxPadding - maximum random padding to use when necessary.
-//
-// maxStreamsPerConn - limits the number of streams per physical connection. If
-//                     <=0, defaults to max uint16.
-//
-// idleInterval - if we haven't dialed any new connections within this interval,
-//                open a new physical connection on the next dial.
-//
-// pingInterval - how frequently to ping to calculate RTT, set to 0 to disable.
-//
-// pool - BufferPool to use
-//
-// cipherCode - which cipher to use, 1 = AES128 in CTR mode, 2 = ChaCha20
-//
-// serverPublicKey - if provided, this dialer will use encryption.
-//
-// dial - function to open an underlying connection.
-func NewDialer(windowSize int, maxPadding int, maxStreamsPerConn uint16, idleInterval time.Duration, pingInterval time.Duration, pool BufferPool, cipherCode Cipher, serverPublicKey *rsa.PublicKey) Dialer {
-	if windowSize <= 0 {
-		windowSize = defaultWindowSize
+func NewDialer(opts *DialerOpts) Dialer {
+	if opts.WindowSize <= 0 {
+		opts.WindowSize = defaultWindowSize
 	}
-	if maxStreamsPerConn <= 0 || maxStreamsPerConn > maxID {
-		maxStreamsPerConn = maxID
+	if opts.MaxStreamsPerConn <= 0 || opts.MaxStreamsPerConn > maxID {
+		opts.MaxStreamsPerConn = maxID
 	}
-	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   pingInterval: %v   cipher: %v", windowSize, maxPadding, maxStreamsPerConn, pingInterval, cipherCode)
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
+		opts.WindowSize,
+		opts.MaxPadding,
+		opts.MaxStreamsPerConn,
+		opts.PingInterval,
+		opts.Cipher)
 	return &dialer{
-		windowSize:       windowSize,
-		maxPadding:       maxPadding,
-		maxStreamPerConn: maxStreamsPerConn,
-		idleInterval:     idleInterval,
-		pingInterval:     pingInterval,
-		pool:             pool,
-		cipherCode:       cipherCode,
-		serverPublicKey:  serverPublicKey,
+		windowSize:       opts.WindowSize,
+		maxPadding:       opts.MaxPadding,
+		maxStreamPerConn: opts.MaxStreamsPerConn,
+		idleInterval:     opts.IdleInterval,
+		pingInterval:     opts.PingInterval,
+		pool:             opts.Pool,
+		cipherCode:       opts.Cipher,
+		serverPublicKey:  opts.ServerPublicKey,
 	}
 }
 
