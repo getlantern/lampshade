@@ -69,7 +69,7 @@ func (l *listener) process() {
 	for {
 		conn, err := l.wrapped.Accept()
 		if err != nil {
-			l.errCh <- &netError{err.Error(), false, false}
+			l.errCh <- err
 			return
 		}
 		go l.onConn(conn)
