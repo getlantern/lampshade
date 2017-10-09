@@ -79,8 +79,8 @@ func (l *listener) process() {
 func (l *listener) onConn(conn net.Conn) {
 	err := l.doOnConn(conn)
 	if err != nil {
-		l.errCh <- &netError{err.Error(), false, true}
 		conn.Close()
+		log.Error(err)
 	}
 }
 
