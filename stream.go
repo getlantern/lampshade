@@ -102,20 +102,16 @@ func (c *stream) Close() error {
 }
 
 func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
-	didClose := false
 	c.mx.Lock()
 	if !c.closed {
 		c.closed = true
 		c.finalReadErr = readErr
 		c.finalWriteErr = writeErr
-		didClose = true
-	}
-	c.mx.Unlock()
-	if didClose {
 		c.rb.close()
 		c.sb.close(sendRST)
 		c.writeTimer.Stop()
 	}
+	c.mx.Unlock()
 	return nil
 }
 
