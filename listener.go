@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"time"
 )
 
 type listener struct {
@@ -66,12 +67,28 @@ func (l *listener) Close() error {
 }
 
 func (l *listener) process() {
+	var tempDelay time.Duration // how long to sleep on accept failure
 	for {
 		conn, err := l.wrapped.Accept()
 		if err != nil {
-			l.errCh <- &netError{err.Error(), false, false}
+			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+				// delay code based on net/http.Server
+				if tempDelay == 0 {
+					tempDelay = 5 * time.Millisecond
+				} else {
+					tempDelay *= 2
+				}
+				if max := 1 * time.Second; tempDelay > max {
+					tempDelay = max
+				}
+				log.Errorf("lampshade: Accept error: %v; retrying in %v", err, tempDelay)
+				time.Sleep(tempDelay)
+				continue
+			}
+			l.errCh <- err
 			return
 		}
+		tempDelay = 0
 		go l.onConn(conn)
 	}
 }
@@ -79,8 +96,8 @@ func (l *listener) process() {
 func (l *listener) onConn(conn net.Conn) {
 	err := l.doOnConn(conn)
 	if err != nil {
-		l.errCh <- &netError{err.Error(), false, true}
 		conn.Close()
+		log.Error(err)
 	}
 }
 
