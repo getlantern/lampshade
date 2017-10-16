@@ -251,12 +251,12 @@ func (s *session) sendLoop() {
 
 	for {
 		select {
-		case frame, more := <-s.out:
-			stillMore := true
+		case frame, open := <-s.out:
+			stillOpen := true
 			if frame != nil {
-				stillMore = s.send(frame)
+				stillOpen = s.send(frame)
 			}
-			if !more || !stillMore {
+			if !open || !stillOpen {
 				// closed
 				return
 			}
@@ -270,14 +270,14 @@ func (s *session) sendLoop() {
 	}
 }
 
-func (s *session) send(frame []byte) (more bool) {
+func (s *session) send(frame []byte) (open bool) {
 	snd := &sender{
 		session:        s,
 		coalescedBytes: 0,
 		coalesced:      1,
 		startOfData:    lenSize, // Reserve space for header in sessionFrame
 	}
-	more = snd.send(frame)
+	open = snd.send(frame)
 	if len(snd.closedStreams) > 0 {
 		s.mx.Lock()
 		for _, streamID := range snd.closedStreams {
@@ -296,7 +296,7 @@ type sender struct {
 	closedStreams  []uint16
 }
 
-func (snd *sender) send(frame []byte) (more bool) {
+func (snd *sender) send(frame []byte) (open bool) {
 	// Coalesce pending writes. This helps with performance and blocking
 	// resistence by combining packets.
 	if snd.clientInitMsg != nil {
@@ -307,7 +307,7 @@ func (snd *sender) send(frame []byte) (more bool) {
 		snd.clientInitMsg = nil
 	}
 	snd.bufferFrame(frame)
-	more = snd.coalesceAdditionalFrames()
+	open = snd.coalesceAdditionalFrames()
 
 	if snd.pingInterval > 0 {
 		now := time.Now()
@@ -364,15 +364,15 @@ func (snd *sender) coalesceAdditionalFrames() bool {
 	// Coalesce enough to exceed coalesceThreshold
 	for snd.startOfData+snd.coalescedBytes+snd.cipherOverhead < coalesceThreshold {
 		select {
-		case frame, more := <-snd.out:
+		case frame, open := <-snd.out:
 			// out may have been closed before we started coalescing, so check for nil
 			// frame
 			if frame == nil {
-				return more
+				return open
 			}
 			// pending frame immediately available, add it
 			snd.bufferFrame(frame)
-			if !more {
+			if !open {
 				return false
 			}
 		case frame := <-snd.echoOut:
