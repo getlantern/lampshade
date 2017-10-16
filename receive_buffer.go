@@ -138,6 +138,13 @@ func (buf *receiveBuffer) ackIfNecessary() {
 }
 
 func (buf *receiveBuffer) sendACK() {
+	buf.mx.RLock()
+	closed := buf.closed
+	buf.mx.RUnlock()
+	if closed {
+		// Don't bother acking
+		return
+	}
 	buf.ack <- ackWithFrames(buf.defaultHeader, int32(buf.unacked))
 }
 

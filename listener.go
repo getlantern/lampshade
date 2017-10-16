@@ -41,6 +41,7 @@ func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.P
 		errCh:            make(chan error),
 	}
 	go l.process()
+	trackStats()
 	return l
 }
 

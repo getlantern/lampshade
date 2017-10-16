@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"sync"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type sendBuffer struct {
 	window         *window
 	in             chan []byte
 	closeRequested chan bool
+	closed         sync.WaitGroup
 }
 
 func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendBuffer {
@@ -32,6 +34,7 @@ func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendB
 		in:             make(chan []byte, windowSize),
 		closeRequested: make(chan bool, 1),
 	}
+	buf.closed.Add(1)
 	go buf.sendLoop(out)
 	return buf
 }
@@ -47,6 +50,8 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 		// drain remaining writes
 		for range buf.in {
 		}
+
+		buf.closed.Done()
 	}()
 
 	closeTimer := time.NewTimer(largeTimeout)
@@ -99,6 +104,7 @@ func (buf *sendBuffer) close(sendRST bool) {
 	default:
 		// close already requested, ignore
 	}
+	buf.closed.Wait()
 }
 
 func (buf *sendBuffer) sendRST(out chan []byte) {
