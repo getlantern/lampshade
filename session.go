@@ -8,6 +8,7 @@ import (
 	"math/big"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/getlantern/ema"
@@ -17,6 +18,26 @@ import (
 const (
 	oneYear = 8760 * time.Hour
 )
+
+var (
+	openSessions    int64
+	closingSessions int64
+	closedSessions  int64
+	recvLoops       int64
+	sendLoops       int64
+	trackStatsOnce  sync.Once
+)
+
+func trackStats() {
+	trackStatsOnce.Do(func() {
+		go func() {
+			for {
+				time.Sleep(10 * time.Second)
+				log.Debugf("Sessions    Open: %d   Recv Loops: %d   Send Loops: %d   Closing: %d   Closed: %d", atomic.LoadInt64(&openSessions), atomic.LoadInt64(&recvLoops), atomic.LoadInt64(&sendLoops), atomic.LoadInt64(&closingSessions), atomic.LoadInt64(&closedSessions))
+			}
+		}()
+	})
+}
 
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
@@ -43,6 +64,7 @@ type session struct {
 	connCh           chan net.Conn
 	beforeClose      func(*session)
 	emaRTT           *ema.EMA
+	closeOnce        sync.Once
 	mx               sync.RWMutex
 }
 
@@ -76,6 +98,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 	if err != nil {
 		return nil, err
 	}
+	atomic.AddInt64(&openSessions, 1)
 	isClient := clientInitMsg != nil
 	if isClient {
 		s.emaRTT = ema.NewDuration(0, 0.5)
@@ -86,6 +109,11 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 }
 
 func (s *session) recvLoop() {
+	atomic.AddInt64(&recvLoops, 1)
+	defer func() {
+		atomic.AddInt64(&recvLoops, -1)
+	}()
+
 	echoTS := make([]byte, tsSize)
 	lengthBuffer := make([]byte, lenSize)
 	var sessionFrame []byte
@@ -216,29 +244,40 @@ func (s *session) recvLoop() {
 }
 
 func (s *session) sendLoop() {
+	atomic.AddInt64(&sendLoops, 1)
+	defer func() {
+		atomic.AddInt64(&sendLoops, -1)
+	}()
+
 	for {
 		select {
 		case frame, more := <-s.out:
-			s.send(frame)
-			if !more {
+			stillMore := true
+			if frame != nil {
+				stillMore = s.send(frame)
+			}
+			if !more || !stillMore {
 				// closed
 				return
 			}
 		case frame := <-s.echoOut:
 			// note - echos get their own channel so they don't queue behind data
-			s.send(frame)
+			if !s.send(frame) {
+				// closed
+				return
+			}
 		}
 	}
 }
 
-func (s *session) send(frame []byte) {
+func (s *session) send(frame []byte) (more bool) {
 	snd := &sender{
 		session:        s,
 		coalescedBytes: 0,
 		coalesced:      1,
 		startOfData:    lenSize, // Reserve space for header in sessionFrame
 	}
-	snd.send(frame)
+	more = snd.send(frame)
 	if len(snd.closedStreams) > 0 {
 		s.mx.Lock()
 		for _, streamID := range snd.closedStreams {
@@ -246,6 +285,7 @@ func (s *session) send(frame []byte) {
 		}
 		s.mx.Unlock()
 	}
+	return
 }
 
 type sender struct {
@@ -256,7 +296,7 @@ type sender struct {
 	closedStreams  []uint16
 }
 
-func (snd *sender) send(frame []byte) {
+func (snd *sender) send(frame []byte) (more bool) {
 	// Coalesce pending writes. This helps with performance and blocking
 	// resistence by combining packets.
 	if snd.clientInitMsg != nil {
@@ -267,7 +307,7 @@ func (snd *sender) send(frame []byte) {
 		snd.clientInitMsg = nil
 	}
 	snd.bufferFrame(frame)
-	snd.coalesceAdditionalFrames()
+	more = snd.coalesceAdditionalFrames()
 
 	if snd.pingInterval > 0 {
 		now := time.Now()
@@ -316,23 +356,34 @@ func (snd *sender) send(frame []byte) {
 	if err != nil {
 		snd.onSessionError(nil, err)
 	}
+
+	return
 }
 
-func (snd *sender) coalesceAdditionalFrames() {
+func (snd *sender) coalesceAdditionalFrames() bool {
 	// Coalesce enough to exceed coalesceThreshold
 	for snd.startOfData+snd.coalescedBytes+snd.cipherOverhead < coalesceThreshold {
 		select {
-		case frame := <-snd.out:
+		case frame, more := <-snd.out:
+			// out may have been closed before we started coalescing, so check for nil
+			// frame
+			if frame == nil {
+				return more
+			}
 			// pending frame immediately available, add it
 			snd.bufferFrame(frame)
+			if !more {
+				return false
+			}
 		case frame := <-snd.echoOut:
 			// pending echo immediately available, add it
 			snd.bufferFrame(frame)
 		default:
 			// no more frames immediately available
-			return
+			return true
 		}
 	}
+	return true
 }
 
 func (snd *sender) bufferFrame(frame []byte) {
@@ -370,7 +421,6 @@ func (snd *sender) coalesce(b []byte) {
 
 func (s *session) onSessionError(readErr error, writeErr error) {
 	s.Close()
-
 	if readErr != nil {
 		log.Errorf("Error on reading: %v", readErr)
 	} else {
@@ -398,6 +448,9 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 		// considered no good at this point and we won't bother sending anything.
 		c.close(false, readErr, writeErr)
 	}
+	s.closeOnce.Do(func() {
+		close(s.out)
+	})
 }
 
 func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
@@ -436,10 +489,15 @@ func (s *session) closeStream(id uint16) {
 }
 
 func (s *session) Close() error {
+	atomic.AddInt64(&closingSessions, 1)
 	if s.beforeClose != nil {
 		s.beforeClose(s)
 	}
-	return s.Conn.Close()
+	err := s.Conn.Close()
+	atomic.AddInt64(&closingSessions, -1)
+	atomic.AddInt64(&openSessions, -1)
+	atomic.AddInt64(&closedSessions, 1)
+	return err
 }
 
 func (s *session) Wrapped() net.Conn {
