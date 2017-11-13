@@ -3,6 +3,8 @@ package lampshade
 import (
 	"sync"
 	"time"
+
+	"github.com/getlantern/ops"
 )
 
 var (
@@ -35,7 +37,7 @@ func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendB
 		closeRequested: make(chan bool, 1),
 	}
 	buf.closed.Add(1)
-	go buf.sendLoop(out)
+	ops.Go(func() { buf.sendLoop(out) })
 	return buf
 }
 

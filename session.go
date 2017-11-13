@@ -13,6 +13,7 @@ import (
 
 	"github.com/getlantern/ema"
 	"github.com/getlantern/mtime"
+	"github.com/getlantern/ops"
 )
 
 const (
@@ -30,12 +31,12 @@ var (
 
 func trackStats() {
 	trackStatsOnce.Do(func() {
-		go func() {
+		ops.Go(func() {
 			for {
 				time.Sleep(10 * time.Second)
 				log.Debugf("Sessions    Open: %d   Recv Loops: %d   Send Loops: %d   Closing: %d   Closed: %d", atomic.LoadInt64(&openSessions), atomic.LoadInt64(&recvLoops), atomic.LoadInt64(&sendLoops), atomic.LoadInt64(&closingSessions), atomic.LoadInt64(&closedSessions))
 			}
-		}()
+		})
 	})
 }
 
@@ -103,8 +104,8 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 	if isClient {
 		s.emaRTT = ema.NewDuration(0, 0.5)
 	}
-	go s.sendLoop()
-	go s.recvLoop()
+	ops.Go(s.sendLoop)
+	ops.Go(s.recvLoop)
 	return s, nil
 }
 
