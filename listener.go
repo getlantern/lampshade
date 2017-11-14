@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"time"
+
+	"github.com/getlantern/ops"
 )
 
 type listener struct {
@@ -40,7 +42,7 @@ func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.P
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
 	}
-	go l.process()
+	ops.Go(l.process)
 	trackStats()
 	return l
 }
@@ -59,9 +61,9 @@ func (l *listener) Addr() net.Addr {
 }
 
 func (l *listener) Close() error {
-	go func() {
+	ops.Go(func() {
 		l.errCh <- ErrListenerClosed
-	}()
+	})
 	// Closing wrapped has the side effect of making the process loop terminate
 	// because it will fail to accept from wrapped.
 	return l.wrapped.Close()
@@ -90,7 +92,7 @@ func (l *listener) process() {
 			return
 		}
 		tempDelay = 0
-		go l.onConn(conn)
+		ops.Go(func() { l.onConn(conn) })
 	}
 }
 
