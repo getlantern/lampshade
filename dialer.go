@@ -114,6 +114,7 @@ func (d *dialer) DialStream(dial DialFN) (Stream, error) {
 		var err error
 		current, err = d.startSession(dial)
 		if err != nil {
+			d.mx.Unlock()
 			return nil, err
 		}
 	}
@@ -139,7 +140,6 @@ func (d *dialer) EMARTT() time.Duration {
 func (d *dialer) startSession(dial DialFN) (*session, error) {
 	conn, err := dial()
 	if err != nil {
-		d.mx.Unlock()
 		return nil, err
 	}
 
