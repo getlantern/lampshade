@@ -3,6 +3,7 @@ package lampshade
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -65,6 +66,7 @@ type session struct {
 	connCh           chan net.Conn
 	beforeClose      func(*session)
 	emaRTT           *ema.EMA
+	closeCh          chan struct{}
 	closeOnce        sync.Once
 	mx               sync.RWMutex
 }
@@ -93,6 +95,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		closed:           make(map[uint16]bool),
 		connCh:           connCh,
 		beforeClose:      beforeClose,
+		closeCh:          make(chan struct{}),
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -252,12 +255,10 @@ func (s *session) sendLoop() {
 
 	for {
 		select {
-		case frame, open := <-s.out:
-			stillOpen := true
-			if frame != nil {
-				stillOpen = s.send(frame)
-			}
-			if !open || !stillOpen {
+		case <-s.closeCh:
+			return
+		case frame := <-s.out:
+			if !s.send(frame) {
 				// closed
 				return
 			}
@@ -365,17 +366,11 @@ func (snd *sender) coalesceAdditionalFrames() bool {
 	// Coalesce enough to exceed coalesceThreshold
 	for snd.startOfData+snd.coalescedBytes+snd.cipherOverhead < coalesceThreshold {
 		select {
-		case frame, open := <-snd.out:
-			// out may have been closed before we started coalescing, so check for nil
-			// frame
-			if frame == nil {
-				return open
-			}
+		case <-snd.closeCh:
+			return false
+		case frame := <-snd.out:
 			// pending frame immediately available, add it
 			snd.bufferFrame(frame)
-			if !open {
-				return false
-			}
 		case frame := <-snd.echoOut:
 			// pending echo immediately available, add it
 			snd.bufferFrame(frame)
@@ -449,9 +444,6 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 		// considered no good at this point and we won't bother sending anything.
 		c.close(false, readErr, writeErr)
 	}
-	s.closeOnce.Do(func() {
-		close(s.out)
-	})
 }
 
 func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
@@ -489,15 +481,21 @@ func (s *session) closeStream(id uint16) {
 	s.closed[id] = true
 }
 
+var errorAlreadyClosed = errors.New("session already closed")
+
 func (s *session) Close() error {
-	atomic.AddInt64(&closingSessions, 1)
-	if s.beforeClose != nil {
-		s.beforeClose(s)
-	}
-	err := s.Conn.Close()
-	atomic.AddInt64(&closingSessions, -1)
-	atomic.AddInt64(&openSessions, -1)
-	atomic.AddInt64(&closedSessions, 1)
+	err := errorAlreadyClosed
+	s.closeOnce.Do(func() {
+		close(s.closeCh)
+		atomic.AddInt64(&closingSessions, 1)
+		if s.beforeClose != nil {
+			s.beforeClose(s)
+		}
+		err = s.Conn.Close()
+		atomic.AddInt64(&closingSessions, -1)
+		atomic.AddInt64(&openSessions, -1)
+		atomic.AddInt64(&closedSessions, 1)
+	})
 	return err
 }
 
