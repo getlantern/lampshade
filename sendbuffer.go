@@ -111,5 +111,9 @@ func (buf *sendBuffer) close(sendRST bool) {
 
 func (buf *sendBuffer) sendRST(out chan []byte) {
 	// Send an RST frame with the streamID
-	out <- withFrameType(buf.defaultHeader, frameTypeRST)
+	select {
+	case out <- withFrameType(buf.defaultHeader, frameTypeRST):
+	default:
+		log.Trace("can't send RST to peer")
+	}
 }
