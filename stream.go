@@ -108,6 +108,10 @@ func (c *stream) writeChunks(b []byte) (int, error) {
 	}
 }
 
+func (c *stream) ack(frames int) {
+	c.sb.window.add(frames)
+}
+
 func (c *stream) Close() error {
 	return c.close(true, ErrConnectionClosed, ErrConnectionClosed)
 }

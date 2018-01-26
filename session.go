@@ -179,14 +179,13 @@ func (s *session) recvLoop() {
 					// Stream was already closed, ignore
 					continue
 				}
-				_ackedFrames := b[headerSize:ackFrameSize]
-				_, err = io.ReadFull(r, _ackedFrames)
+				ackedFrames := b[headerSize:ackFrameSize]
+				_, err = io.ReadFull(r, ackedFrames)
 				if err != nil {
 					s.onSessionError(err, nil)
 					return
 				}
-				ackedFrames := int(binaryEncoding.Uint32(_ackedFrames))
-				c.sb.window.add(ackedFrames)
+				c.ack(int(binaryEncoding.Uint32(ackedFrames)))
 				continue
 			case frameTypeRST:
 				// Closing existing connection
