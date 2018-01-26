@@ -459,15 +459,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	defaultHeader := newHeader(frameTypeData, id)
-	c = &stream{
-		Conn:       s,
-		session:    s,
-		pool:       s.pool,
-		sb:         newSendBuffer(defaultHeader, s.out, s.windowSize),
-		rb:         newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
-		writeTimer: time.NewTimer(oneYear),
-	}
+	c = newStream(s, s.pool, s.out, s.windowSize, newHeader(frameTypeData, id))
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {

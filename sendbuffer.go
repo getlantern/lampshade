@@ -99,6 +99,10 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 	}
 }
 
+func (buf *sendBuffer) sendUntil(t time.Duration) {
+
+}
+
 func (buf *sendBuffer) close(sendRST bool) {
 	select {
 	case buf.closeRequested <- sendRST:

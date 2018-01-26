@@ -23,6 +23,17 @@ type stream struct {
 	mx            sync.RWMutex
 }
 
+func newStream(s *session, bp BufferPool, out chan []byte, windowSize int, defaultHeader []byte) *stream {
+	return &stream{
+		Conn:       s,
+		session:    s,
+		pool:       bp,
+		sb:         newSendBuffer(defaultHeader, out, windowSize),
+		rb:         newReceiveBuffer(defaultHeader, out, bp, windowSize),
+		writeTimer: time.NewTimer(oneYear),
+	}
+}
+
 func (c *stream) Read(b []byte) (int, error) {
 	c.mx.RLock()
 	readDeadline := c.readDeadline
