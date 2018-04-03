@@ -13,7 +13,7 @@ func TestSendBuffer(t *testing.T) {
 
 	depth := 5
 
-	out := make(chan []byte)
+	out := &mockWriter{make(chan []byte)}
 	buf := newSendBuffer(header, out, depth)
 
 	// write loop
@@ -29,7 +29,7 @@ func TestSendBuffer(t *testing.T) {
 loop:
 	for {
 		select {
-		case b := <-out:
+		case b := <-out.c:
 			if assert.EqualValues(t, header, b[1:]) {
 				wrote += string(b[:1])
 			}
@@ -45,7 +45,7 @@ loop:
 loop2:
 	for {
 		select {
-		case b := <-out:
+		case b := <-out.c:
 			if assert.EqualValues(t, header, b[1:]) {
 				wrote += string(b[:1])
 			}

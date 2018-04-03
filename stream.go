@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -21,6 +22,17 @@ type stream struct {
 	finalReadErr  error
 	finalWriteErr error
 	mx            sync.RWMutex
+}
+
+func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte) *stream {
+	return &stream{
+		Conn:       s,
+		session:    s,
+		pool:       bp,
+		sb:         newSendBuffer(defaultHeader, w, windowSize),
+		rb:         newReceiveBuffer(defaultHeader, w, bp, windowSize),
+		writeTimer: time.NewTimer(oneYear),
+	}
 }
 
 func (c *stream) Read(b []byte) (int, error) {
@@ -95,6 +107,10 @@ func (c *stream) writeChunks(b []byte) (int, error) {
 			return totalN, err
 		}
 	}
+}
+
+func (c *stream) ack(frames int) {
+	c.sb.window.add(frames)
 }
 
 func (c *stream) Close() error {

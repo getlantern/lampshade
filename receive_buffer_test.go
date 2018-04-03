@@ -15,7 +15,7 @@ func TestReceiveBuffer(t *testing.T) {
 	depth := 5
 
 	pool := &testpool{}
-	ack := make(chan []byte, 1000)
+	ack := &mockWriter{make(chan []byte, 1000)}
 	buf := newReceiveBuffer(header, ack, pool, depth)
 	for i := 0; i < 2; i++ {
 		b := pool.Get()
@@ -36,7 +36,7 @@ func TestReceiveBuffer(t *testing.T) {
 ackloop:
 	for {
 		select {
-		case a := <-ack:
+		case a := <-ack.c:
 			if assert.EqualValues(t, frameTypeACK, a[winSize]) {
 				a2 := withFrameType(a[winSize:], frameTypeData)
 				if assert.EqualValues(t, header, a2) {

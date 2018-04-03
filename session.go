@@ -179,14 +179,13 @@ func (s *session) recvLoop() {
 					// Stream was already closed, ignore
 					continue
 				}
-				_ackedFrames := b[headerSize:ackFrameSize]
-				_, err = io.ReadFull(r, _ackedFrames)
+				ackedFrames := b[headerSize:ackFrameSize]
+				_, err = io.ReadFull(r, ackedFrames)
 				if err != nil {
 					s.onSessionError(err, nil)
 					return
 				}
-				ackedFrames := int(binaryEncoding.Uint32(_ackedFrames))
-				c.sb.window.add(ackedFrames)
+				c.ack(int(binaryEncoding.Uint32(ackedFrames)))
 				continue
 			case frameTypeRST:
 				// Closing existing connection
@@ -459,15 +458,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	defaultHeader := newHeader(frameTypeData, id)
-	c = &stream{
-		Conn:       s,
-		session:    s,
-		pool:       s.pool,
-		sb:         newSendBuffer(defaultHeader, s.out, s.windowSize),
-		rb:         newReceiveBuffer(defaultHeader, s.out, s.pool, s.windowSize),
-		writeTimer: time.NewTimer(oneYear),
-	}
+	c = newStream(s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id))
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {
@@ -505,6 +496,19 @@ func (s *session) Wrapped() net.Conn {
 
 func (s *session) EMARTT() time.Duration {
 	return s.emaRTT.GetDuration()
+}
+
+type sessionWriter struct {
+	s *session
+}
+
+func (w sessionWriter) Write(b []byte) (int, error) {
+	select {
+	case <-w.s.closeCh:
+		return 0, errorAlreadyClosed
+	case w.s.out <- b:
+		return len(b), nil
+	}
 }
 
 // TODO: do we need a way to close a session/physical connection intentionally?

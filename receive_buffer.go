@@ -22,7 +22,7 @@ type receiveBuffer struct {
 	ackInterval   int
 	unacked       int
 	in            chan []byte
-	ack           chan []byte
+	ack           io.Writer
 	pool          BufferPool
 	poolable      []byte
 	current       []byte
@@ -30,7 +30,7 @@ type receiveBuffer struct {
 	mx            sync.RWMutex
 }
 
-func newReceiveBuffer(defaultHeader []byte, ack chan []byte, pool BufferPool, windowSize int) *receiveBuffer {
+func newReceiveBuffer(defaultHeader []byte, ack io.Writer, pool BufferPool, windowSize int) *receiveBuffer {
 	ackInterval := int(math.Ceil(float64(windowSize) / 10))
 	return &receiveBuffer{
 		defaultHeader: defaultHeader,
@@ -145,7 +145,7 @@ func (buf *receiveBuffer) sendACK() {
 		// Don't bother acking
 		return
 	}
-	buf.ack <- ackWithFrames(buf.defaultHeader, int32(buf.unacked))
+	buf.ack.Write(ackWithFrames(buf.defaultHeader, int32(buf.unacked)))
 }
 
 func (buf *receiveBuffer) onFrame(frame []byte) {

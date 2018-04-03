@@ -390,6 +390,22 @@ func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, Dialer, DialFN
 	}, &wg, nil
 }
 
+func TestCloseStreamAfterSessionClosed(t *testing.T) {
+	l, _, dial, _, err := echoServerAndDialer(0)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer l.Close()
+
+	conn, err := dial()
+	if !assert.NoError(t, err) {
+		return
+	}
+	conn.(Stream).Session().Close()
+	// Simply make sure it doesn't block
+	conn.Close()
+}
+
 func TestConcurrency(t *testing.T) {
 	concurrency := 100
 
