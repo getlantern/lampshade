@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"io"
 	"sync"
 	"time"
 
@@ -29,7 +30,7 @@ type sendBuffer struct {
 	closed         sync.WaitGroup
 }
 
-func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendBuffer {
+func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int) *sendBuffer {
 	buf := &sendBuffer{
 		defaultHeader:  defaultHeader,
 		window:         newWindow(windowSize),
@@ -37,16 +38,16 @@ func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendB
 		closeRequested: make(chan bool, 1),
 	}
 	buf.closed.Add(1)
-	ops.Go(func() { buf.sendLoop(out) })
+	ops.Go(func() { buf.sendLoop(w) })
 	return buf
 }
 
-func (buf *sendBuffer) sendLoop(out chan []byte) {
+func (buf *sendBuffer) sendLoop(w io.Writer) {
 	sendRST := false
 
 	defer func() {
 		if sendRST {
-			buf.sendRST(out)
+			buf.sendRST(w)
 		}
 
 		// drain remaining writes
@@ -70,14 +71,14 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 				select {
 				case <-windowAvailable:
 					// send allowed
-					out <- append(frame, buf.defaultHeader...)
+					w.Write(append(frame, buf.defaultHeader...))
 				case sendRST = <-buf.closeRequested:
 					// close requested before window available
 					signalClose()
 					select {
 					case <-windowAvailable:
 						// send allowed
-						out <- append(frame, buf.defaultHeader...)
+						w.Write(append(frame, buf.defaultHeader...))
 					case <-closeTimer.C:
 						// closed before window available
 						return
@@ -99,10 +100,6 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 	}
 }
 
-func (buf *sendBuffer) sendUntil(t time.Duration) {
-
-}
-
 func (buf *sendBuffer) close(sendRST bool) {
 	select {
 	case buf.closeRequested <- sendRST:
@@ -113,11 +110,7 @@ func (buf *sendBuffer) close(sendRST bool) {
 	buf.closed.Wait()
 }
 
-func (buf *sendBuffer) sendRST(out chan []byte) {
+func (buf *sendBuffer) sendRST(w io.Writer) {
 	// Send an RST frame with the streamID
-	select {
-	case out <- withFrameType(buf.defaultHeader, frameTypeRST):
-	default:
-		log.Trace("can't send RST to peer")
-	}
+	w.Write(withFrameType(buf.defaultHeader, frameTypeRST))
 }

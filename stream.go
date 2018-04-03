@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"io"
 	"net"
 	"sync"
 	"time"
@@ -23,13 +24,13 @@ type stream struct {
 	mx            sync.RWMutex
 }
 
-func newStream(s *session, bp BufferPool, out chan []byte, windowSize int, defaultHeader []byte) *stream {
+func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte) *stream {
 	return &stream{
 		Conn:       s,
 		session:    s,
 		pool:       bp,
-		sb:         newSendBuffer(defaultHeader, out, windowSize),
-		rb:         newReceiveBuffer(defaultHeader, out, bp, windowSize),
+		sb:         newSendBuffer(defaultHeader, w, windowSize),
+		rb:         newReceiveBuffer(defaultHeader, w, bp, windowSize),
 		writeTimer: time.NewTimer(oneYear),
 	}
 }

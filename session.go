@@ -458,7 +458,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	c = newStream(s, s.pool, s.out, s.windowSize, newHeader(frameTypeData, id))
+	c = newStream(s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id))
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {
@@ -496,6 +496,19 @@ func (s *session) Wrapped() net.Conn {
 
 func (s *session) EMARTT() time.Duration {
 	return s.emaRTT.GetDuration()
+}
+
+type sessionWriter struct {
+	s *session
+}
+
+func (w sessionWriter) Write(b []byte) (int, error) {
+	select {
+	case <-w.s.closeCh:
+		return 0, errorAlreadyClosed
+	case w.s.out <- b:
+		return len(b), nil
+	}
 }
 
 // TODO: do we need a way to close a session/physical connection intentionally?
