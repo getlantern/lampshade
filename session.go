@@ -126,7 +126,11 @@ func (s *session) recvLoop() {
 		// First read and decrypt length
 		_, err := io.ReadFull(s, lengthBuffer)
 		if err != nil {
-			s.onSessionError(fmt.Errorf("Unable to read length: %v", err), nil)
+			if err == io.EOF {
+				s.onSessionError(err, nil)
+			} else {
+				s.onSessionError(fmt.Errorf("Unable to read length: %v", err), nil)
+			}
 			return
 		}
 		s.metaDecrypt(lengthBuffer)
@@ -238,6 +242,7 @@ func (s *session) recvLoop() {
 
 			c, open := s.getOrCreateStream(id)
 			if !open {
+				log.Debugf("Received data for closed stream %d", id)
 				// Stream was already closed, ignore
 				continue
 			}
@@ -416,33 +421,38 @@ func (snd *sender) coalesce(b []byte) {
 
 func (s *session) onSessionError(readErr error, writeErr error) {
 	s.Close()
-	if readErr != nil {
-		log.Errorf("Error on reading: %v", readErr)
-	} else {
-		readErr = ErrBrokenPipe
-	}
-	if writeErr != nil {
-		log.Errorf("Error on writing: %v", writeErr)
-	} else {
-		writeErr = ErrBrokenPipe
-	}
-	if readErr == io.EOF {
-		// Treat EOF as ErrUnexpectedEOF because the underlying connection should
-		// never be out of data until and unless the stream has been closed with an
-		// RST frame.
-		readErr = io.ErrUnexpectedEOF
-	}
 	s.mx.RLock()
 	streams := make([]*stream, 0, len(s.streams))
 	for _, c := range s.streams {
 		streams = append(streams, c)
 	}
 	s.mx.RUnlock()
+
+	if readErr == io.EOF && len(streams) > 0 {
+		// Treat EOF as ErrUnexpectedEOF because the underlying connection should
+		// never be out of data until and unless the stream has been closed with an
+		// RST frame.
+		readErr = io.ErrUnexpectedEOF
+	}
+
+	if readErr == nil {
+		readErr = ErrBrokenPipe
+	} else if readErr != io.EOF {
+		log.Errorf("Error on reading: %v", readErr)
+	}
+
+	if writeErr == nil {
+		writeErr = ErrBrokenPipe
+	} else {
+		log.Errorf("Error on writing: %v", writeErr)
+	}
+
 	for _, c := range streams {
 		// Note - we never send an RST because the underlying connection is
 		// considered no good at this point and we won't bother sending anything.
 		c.close(false, readErr, writeErr)
 	}
+
 }
 
 func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
