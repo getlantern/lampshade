@@ -2,7 +2,6 @@ package lampshade
 
 import (
 	"crypto/rsa"
-	"fmt"
 	"io"
 	"net"
 	"time"
@@ -100,7 +99,6 @@ func (l *listener) onConn(conn net.Conn) {
 	err := l.doOnConn(conn)
 	if err != nil {
 		conn.Close()
-		log.Error(err)
 	}
 }
 
@@ -111,11 +109,11 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	// Try to read start sequence
 	_, err := io.ReadFull(conn, initMsg)
 	if err != nil {
-		return fmt.Errorf("Unable to read client init msg after %v for "+conn.RemoteAddr()+": %v", time.Since(start), err)
+		return log.Errorf("Unable to read client init msg after %v for "+conn.RemoteAddr().String()+": %v", time.Since(start), err)
 	}
 	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
-		return fmt.Errorf("Unable to decode client init msg: %v", err)
+		return log.Errorf("Unable to decode client init msg: %v", err)
 	}
 	startSession(conn, windowSize, maxPadding, 0, cs.reversed(), nil, l.pool, l.connCh, nil)
 	return nil
