@@ -79,7 +79,7 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 					w.Write(append(frame, buf.defaultHeader...))
 				case sendRST = <-buf.closeRequested:
 					// close requested before window available
-					signalClose()
+					go signalClose()
 					select {
 					case <-windowAvailable:
 						// send allowed
@@ -95,7 +95,7 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 				return
 			}
 		case sendRST = <-buf.closeRequested:
-			signalClose()
+			go signalClose()
 		case <-closeTimer.C:
 			// We had queued writes, but we haven't gotten any acks within
 			// closeTimeout of closing, don't wait any longer
