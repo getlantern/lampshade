@@ -27,7 +27,10 @@ type sendBuffer struct {
 	window         *window
 	in             chan []byte
 	closeRequested chan bool
+	muClosing      sync.RWMutex
+	closing        bool
 	closed         sync.WaitGroup
+	writeTimer     *time.Timer
 }
 
 func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int) *sendBuffer {
@@ -36,6 +39,7 @@ func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int) *sendBuffe
 		window:         newWindow(windowSize),
 		in:             make(chan []byte, windowSize),
 		closeRequested: make(chan bool, 1),
+		writeTimer:     time.NewTimer(largeTimeout),
 	}
 	buf.closed.Add(1)
 	ops.Go(func() { buf.sendLoop(w) })
@@ -44,22 +48,23 @@ func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int) *sendBuffe
 
 func (buf *sendBuffer) sendLoop(w io.Writer) {
 	sendRST := false
-
 	defer func() {
 		if sendRST {
-			buf.sendRST(w)
+			// Send an RST frame with the streamID
+			w.Write(withFrameType(buf.defaultHeader, frameTypeRST))
 		}
-
 		// drain remaining writes
 		for range buf.in {
 		}
-
 		buf.closed.Done()
 	}()
 
 	closeTimer := time.NewTimer(largeTimeout)
 	signalClose := func() {
+		buf.muClosing.Lock()
+		buf.closing = true
 		close(buf.in)
+		buf.muClosing.Unlock()
 		closeTimer.Reset(closeTimeout)
 	}
 
@@ -90,13 +95,40 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 				return
 			}
 		case sendRST = <-buf.closeRequested:
-			// Signal that we're closing
 			signalClose()
 		case <-closeTimer.C:
 			// We had queued writes, but we haven't gotten any acks within
 			// closeTimeout of closing, don't wait any longer
 			return
 		}
+	}
+}
+
+func (buf *sendBuffer) send(b []byte, writeDeadline time.Time) (int, error) {
+	buf.muClosing.RLock()
+	defer buf.muClosing.RUnlock()
+	if buf.closing {
+		// Make it look like the write worked even though we're not going to send it
+		// anywhere (TODO, might be better way to handle this?)
+		return len(b), nil
+	}
+
+	if writeDeadline.IsZero() {
+		// Don't bother implementing a timeout
+		buf.in <- b
+		return len(b), nil
+	}
+
+	now := time.Now()
+	if writeDeadline.Before(now) {
+		return 0, ErrTimeout
+	}
+	buf.writeTimer.Reset(writeDeadline.Sub(now))
+	select {
+	case buf.in <- b:
+		return len(b), nil
+	case <-buf.writeTimer.C:
+		return 0, ErrTimeout
 	}
 }
 
@@ -107,10 +139,6 @@ func (buf *sendBuffer) close(sendRST bool) {
 	default:
 		// close already requested, ignore
 	}
+	buf.writeTimer.Stop()
 	buf.closed.Wait()
-}
-
-func (buf *sendBuffer) sendRST(w io.Writer) {
-	// Send an RST frame with the streamID
-	w.Write(withFrameType(buf.defaultHeader, frameTypeRST))
 }
