@@ -106,28 +106,32 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 
 func (buf *sendBuffer) send(b []byte, writeDeadline time.Time) (int, error) {
 	buf.muClosing.RLock()
-	defer buf.muClosing.RUnlock()
 	if buf.closing {
 		// Make it look like the write worked even though we're not going to send it
 		// anywhere (TODO, might be better way to handle this?)
+		buf.muClosing.RUnlock()
 		return len(b), nil
 	}
 
 	if writeDeadline.IsZero() {
 		// Don't bother implementing a timeout
 		buf.in <- b
+		buf.muClosing.RUnlock()
 		return len(b), nil
 	}
 
 	now := time.Now()
 	if writeDeadline.Before(now) {
+		buf.muClosing.RUnlock()
 		return 0, ErrTimeout
 	}
 	buf.writeTimer.Reset(writeDeadline.Sub(now))
 	select {
 	case buf.in <- b:
+		buf.muClosing.RUnlock()
 		return len(b), nil
 	case <-buf.writeTimer.C:
+		buf.muClosing.RUnlock()
 		return 0, ErrTimeout
 	}
 }
