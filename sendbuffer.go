@@ -3,6 +3,7 @@ package lampshade
 import (
 	"io"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/getlantern/ops"
@@ -113,9 +114,7 @@ func (buf *sendBuffer) send(b []byte, writeDeadline time.Time) (int, error) {
 
 func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
 	if buf.closing {
-		// Make it look like the write worked even though we're not going to send it
-		// anywhere (TODO, might be better way to handle this?)
-		return len(b), nil
+		return len(b), syscall.EPIPE
 	}
 
 	if writeDeadline.IsZero() {
