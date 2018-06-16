@@ -114,7 +114,7 @@ func (buf *sendBuffer) send(b []byte, writeDeadline time.Time) (int, error) {
 
 func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
 	if buf.closing {
-		return len(b), syscall.EPIPE
+		return 0, syscall.EPIPE
 	}
 
 	if writeDeadline.IsZero() {

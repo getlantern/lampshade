@@ -115,8 +115,9 @@ func TestStreamCloseRemoteAfterEcho(t *testing.T) {
 	assert.Equal(t, io.EOF, err)
 	assert.Equal(t, 0, n)
 
-	_, err = conn.Write([]byte("whatever"))
+	n, err = conn.Write([]byte("whatever"))
 	assert.Equal(t, syscall.EPIPE, err, "Writing to the connection after the remote end already closed it should fail with an EPIPE")
+	assert.Equal(t, 0, n)
 
 	wg.Wait()
 }
