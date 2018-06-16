@@ -17,10 +17,6 @@ import (
 	"github.com/getlantern/ops"
 )
 
-const (
-	oneYear = 8760 * time.Hour
-)
-
 var (
 	openSessions    int64
 	closingSessions int64

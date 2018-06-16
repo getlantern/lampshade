@@ -17,7 +17,6 @@ type stream struct {
 	sb            *sendBuffer
 	readDeadline  time.Time
 	writeDeadline time.Time
-	writeTimer    *time.Timer
 	closed        bool
 	finalReadErr  error
 	finalWriteErr error
@@ -26,12 +25,11 @@ type stream struct {
 
 func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte) *stream {
 	return &stream{
-		Conn:       s,
-		session:    s,
-		pool:       bp,
-		sb:         newSendBuffer(defaultHeader, w, windowSize),
-		rb:         newReceiveBuffer(defaultHeader, w, bp, windowSize),
-		writeTimer: time.NewTimer(oneYear),
+		Conn:    s,
+		session: s,
+		pool:    bp,
+		sb:      newSendBuffer(defaultHeader, w, windowSize),
+		rb:      newReceiveBuffer(defaultHeader, w, bp, windowSize),
 	}
 }
 
@@ -52,17 +50,11 @@ func (c *stream) Write(b []byte) (int, error) {
 	}
 
 	c.mx.RLock()
-	closed := c.closed
 	writeDeadline := c.writeDeadline
 	finalWriteErr := c.finalWriteErr
 	c.mx.RUnlock()
 	if finalWriteErr != nil {
 		return 0, finalWriteErr
-	}
-	if closed {
-		// Make it look like the write worked even though we're not going to send it
-		// anywhere (TODO, might be better way to handle this?)
-		return len(b), nil
 	}
 
 	// copy buffer since we hang on to it past the call to Write but callers
@@ -70,24 +62,7 @@ func (c *stream) Write(b []byte) (int, error) {
 	_b := b
 	b = c.pool.getForFrame()[:len(b)]
 	copy(b, _b)
-
-	if writeDeadline.IsZero() {
-		// Don't bother implementing a timeout
-		c.sb.in <- b
-		return len(b), nil
-	}
-
-	now := time.Now()
-	if writeDeadline.Before(now) {
-		return 0, ErrTimeout
-	}
-	c.writeTimer.Reset(writeDeadline.Sub(now))
-	select {
-	case c.sb.in <- b:
-		return len(b), nil
-	case <-c.writeTimer.C:
-		return 0, ErrTimeout
-	}
+	return c.sb.send(b, writeDeadline)
 }
 
 // writeChunks breaks the buffer down into units smaller than MaxDataLen in size
@@ -125,7 +100,6 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 		c.finalWriteErr = writeErr
 		c.rb.close()
 		c.sb.close(sendRST)
-		c.writeTimer.Stop()
 	}
 	c.mx.Unlock()
 	return nil

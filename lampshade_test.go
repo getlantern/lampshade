@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -115,7 +116,7 @@ func TestStreamCloseRemoteAfterEcho(t *testing.T) {
 	assert.Equal(t, 0, n)
 
 	_, err = conn.Write([]byte("whatever"))
-	assert.NoError(t, err, "We got an EOF on read, but writing should still work")
+	assert.Equal(t, syscall.EPIPE, err, "Writing to the connection after the remote end already closed it should fail with an EPIPE")
 
 	wg.Wait()
 }
