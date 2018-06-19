@@ -109,7 +109,7 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	// Try to read start sequence
 	_, err := io.ReadFull(conn, initMsg)
 	if err != nil {
-		return log.Errorf("Unable to read client init msg after %v for "+conn.RemoteAddr().String()+": %v", time.Since(start), err)
+		return log.Errorf("Unable to read client init msg %v after %v for "+conn.RemoteAddr().String(), err, time.Since(start))
 	}
 	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
