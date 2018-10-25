@@ -47,13 +47,13 @@ func TestWriteSplitting(t *testing.T) {
 		reallyBigData = append(reallyBigData, testdata...)
 	}
 
-	l, _, dial, wg, err := echoServerAndDialer(0)
+	l, dialer, wg, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -85,13 +85,13 @@ func TestWriteSplitting(t *testing.T) {
 }
 
 func TestStreamCloseRemoteAfterEcho(t *testing.T) {
-	l, _, dial, wg, err := echoServerAndDialer(0)
+	l, dialer, wg, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -123,13 +123,13 @@ func TestStreamCloseRemoteAfterEcho(t *testing.T) {
 }
 
 func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
-	l, _, dial, _, err := echoServerAndDialer(0)
+	l, dialer, _, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -149,7 +149,7 @@ func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
 	assert.Equal(t, ErrBrokenPipe, err)
 
 	// Now dial again and make sure that works
-	conn, err = dial()
+	conn, err = dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -168,13 +168,13 @@ func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
 }
 
 func TestStreamCloseLocalPrematurely(t *testing.T) {
-	l, _, dial, _, err := echoServerAndDialer(0)
+	l, dialer, _, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -191,13 +191,13 @@ func TestStreamCloseLocalPrematurely(t *testing.T) {
 }
 
 func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
-	l, _, dial, _, err := echoServerAndDialer(0)
+	l, dialer, _, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -214,7 +214,7 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 	assert.Equal(t, 0, n)
 
 	// Now dial again and make sure that works
-	conn, err = dial()
+	conn, err = dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -234,7 +234,7 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 
 func TestConnIDExhaustion(t *testing.T) {
 	max := 100
-	l, _, dial, _, err := echoServerAndDialer(uint16(max))
+	l, dialer, _, err := echoServerAndDialer(uint16(max))
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -246,7 +246,7 @@ func TestConnIDExhaustion(t *testing.T) {
 	}
 
 	for i := 0; i <= max; i++ {
-		conn, dialErr := dial()
+		conn, dialErr := dialer.Dial()
 		if !assert.NoError(t, dialErr) {
 			return
 		}
@@ -255,7 +255,7 @@ func TestConnIDExhaustion(t *testing.T) {
 
 	assert.NoError(t, connCount.AssertDelta(2), "Opening up to MaxID should have resulted in 1 connection (2 TCP sockets including server end)")
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -265,13 +265,13 @@ func TestConnIDExhaustion(t *testing.T) {
 }
 
 func doTestConnBasicFlow(t *testing.T) {
-	l, dialer, dial, wg, err := echoServerAndDialer(0)
+	l, dialer, wg, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -303,21 +303,21 @@ func doTestConnBasicFlow(t *testing.T) {
 	assert.True(t, dialer.EMARTT() > 0)
 }
 
-func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, Dialer, DialFN, *sync.WaitGroup, error) {
+func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	wrapped, err := net.Listen("tcp", ":0")
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	pkFile, certFile := "pkfile.pem", "certfile.pem"
 	wrapped, err = tlsdefaults.NewListener(wrapped, pkFile, certFile)
 	if err != nil {
-		return nil, nil, nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	pool := NewBufferPool(100)
@@ -387,19 +387,17 @@ func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, Dialer, DialFN
 		Cipher:            AES128GCM,
 		ServerPublicKey:   &pk.RSA().PublicKey})
 
-	return l, dialer, func() (net.Conn, error) {
-		return dialer.Dial(doDial)
-	}, &wg, nil
+	return l, dialer.BoundTo(doDial), &wg, nil
 }
 
 func TestCloseStreamAfterSessionClosed(t *testing.T) {
-	l, _, dial, _, err := echoServerAndDialer(0)
+	l, dialer, _, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
-	conn, err := dial()
+	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}

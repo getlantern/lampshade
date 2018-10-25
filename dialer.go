@@ -27,7 +27,7 @@ type DialerOpts struct {
 	// PingInterval - how frequently to ping to calculate RTT, set to 0 to disable
 	PingInterval time.Duration
 
-	// Pool - BufferPool to use
+	// Pool - BufferPool to use (required)
 	Pool BufferPool
 
 	// Cipher - which cipher to use, 1 = AES128 in CTR mode, 2 = ChaCha20
@@ -37,7 +37,7 @@ type DialerOpts struct {
 	ServerPublicKey *rsa.PublicKey
 }
 
-// NewDialer wraps the given dial function with support for multiplexing. The
+// NewDialer wraps the given dial function with support for lampshade. The
 // returned Streams look and act just like regular net.Conns. The Dialer
 // will multiplex everything over a single net.Conn until it encounters a read
 // or write error on that Conn. At that point, it will dial a new conn for
@@ -137,6 +137,10 @@ func (d *dialer) EMARTT() time.Duration {
 	return rtt
 }
 
+func (d *dialer) BoundTo(dial DialFN) BoundDialer {
+	return &boundDialer{d, dial}
+}
+
 func (d *dialer) startSession(dial DialFN) (*session, error) {
 	conn, err := dial()
 	if err != nil {
@@ -168,4 +172,18 @@ func (d *dialer) sessionClosed(s *session) {
 		d.current = nil
 	}
 	d.mx.Unlock()
+}
+
+type boundDialer struct {
+	Dialer
+
+	dial DialFN
+}
+
+func (bd *boundDialer) Dial() (net.Conn, error) {
+	return bd.Dialer.Dial(bd.dial)
+}
+
+func (bd *boundDialer) DialStream() (Stream, error) {
+	return bd.Dialer.DialStream(bd.dial)
 }
