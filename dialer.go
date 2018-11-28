@@ -111,6 +111,13 @@ func (d *dialer) DialStream(dial DialFN) (Stream, error) {
 
 	// TODO: support pooling of connections (i.e. keep multiple physical connections in flight)
 	if current == nil || idsExhausted || idled {
+		if current != nil {
+			// Need to run this on a goroutine because we call back to sessionClosed()
+			// via the session's beforeClose callback, which needs the mutex that's
+			// already locked here.
+			go current.markDefunct()
+		}
+
 		var err error
 		current, err = d.startSession(dial)
 		if err != nil {
