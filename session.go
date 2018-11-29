@@ -13,8 +13,13 @@ import (
 	"time"
 
 	"github.com/getlantern/ema"
+	"github.com/getlantern/idletiming"
 	"github.com/getlantern/mtime"
 	"github.com/getlantern/ops"
+)
+
+var (
+	ReadTimeout = 15 * time.Second
 )
 
 var (
@@ -59,6 +64,7 @@ type session struct {
 	echoOut          chan []byte
 	streams          map[uint16]*stream
 	closed           map[uint16]bool
+	defunct          bool
 	connCh           chan net.Conn
 	beforeClose      func(*session)
 	emaRTT           *ema.EMA
@@ -112,15 +118,40 @@ func (s *session) recvLoop() {
 	atomic.AddInt64(&recvLoops, 1)
 	defer func() {
 		atomic.AddInt64(&recvLoops, -1)
+		closeErr := s.Conn.Close()
+		if closeErr != nil {
+			log.Errorf("Error closing underlying connection: %v", closeErr)
+		}
 	}()
 
 	echoTS := make([]byte, tsSize)
 	lengthBuffer := make([]byte, lenSize)
 	var sessionFrame []byte
 
+	// Use a Reader that doesn't block indefinitely so that we can check for the
+	// session being closed.
+	r := idletiming.NewReader(s, ReadTimeout)
+
+	readFull := func(b []byte) error {
+		for {
+			n, err := r.Read(b)
+			if n == len(b) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			if s.isClosed() {
+				log.Debug("recvLoop detected session closed")
+				return io.EOF
+			}
+			b = b[n:]
+		}
+	}
+
 	for {
 		// First read and decrypt length
-		_, err := io.ReadFull(s, lengthBuffer)
+		err := readFull(lengthBuffer)
 		if err != nil {
 			if err == io.EOF {
 				s.onSessionError(err, nil)
@@ -137,7 +168,7 @@ func (s *session) recvLoop() {
 			sessionFrame = make([]byte, l)
 		}
 		sessionFrame = sessionFrame[:l]
-		_, err = io.ReadFull(s, sessionFrame)
+		err = readFull(sessionFrame)
 		if err != nil {
 			s.onSessionError(fmt.Errorf("Unable to read session frame: %v", err), nil)
 			return
@@ -473,9 +504,23 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	return c, true
 }
 
+// markDefunct marks this session as defunct. A defunct session will close once
+// all streams are closed.
+func (s *session) markDefunct() {
+	s.mx.Lock()
+	s.defunct = true
+	if len(s.streams) == 0 {
+		s.Close()
+	}
+	s.mx.Unlock()
+}
+
 func (s *session) closeStream(id uint16) {
 	delete(s.streams, id)
 	s.closed[id] = true
+	if s.defunct && len(s.streams) == 0 {
+		s.Close()
+	}
 }
 
 var errorAlreadyClosed = errors.New("session already closed")
@@ -488,12 +533,21 @@ func (s *session) Close() error {
 		if s.beforeClose != nil {
 			s.beforeClose(s)
 		}
-		err = s.Conn.Close()
 		atomic.AddInt64(&closingSessions, -1)
 		atomic.AddInt64(&openSessions, -1)
 		atomic.AddInt64(&closedSessions, 1)
+		err = nil
 	})
 	return err
+}
+
+func (s *session) isClosed() bool {
+	select {
+	case <-s.closeCh:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *session) Wrapped() net.Conn {

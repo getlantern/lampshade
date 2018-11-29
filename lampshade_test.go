@@ -27,6 +27,10 @@ const (
 	testPingInterval = 15 * time.Millisecond
 )
 
+func init() {
+	ReadTimeout = 500 * time.Millisecond
+}
+
 var (
 	largeData = make([]byte, MaxDataLen)
 )
@@ -202,7 +206,7 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 		return
 	}
 	// Close physical connection immediately
-	conn.(Stream).Session().Close()
+	conn.(Stream).Session().(*session).Conn.Close()
 	time.Sleep(50 * time.Millisecond)
 
 	_, err = conn.Write([]byte("stop"))
@@ -234,11 +238,19 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 
 func TestConnIDExhaustion(t *testing.T) {
 	max := 100
-	l, dialer, _, err := echoServerAndDialer(uint16(max))
+	l, dialer, _, err := echoServerAndDialerWithIdleInterval(uint16(max), 50*time.Millisecond)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
+
+	var streams []net.Conn
+	closeStreams := func() {
+		for _, stream := range streams {
+			stream.Close()
+		}
+	}
+	defer closeStreams()
 
 	_, connCount, err := fdcount.Matching("TCP")
 	if !assert.NoError(t, err) {
@@ -246,22 +258,37 @@ func TestConnIDExhaustion(t *testing.T) {
 	}
 
 	for i := 0; i <= max; i++ {
-		conn, dialErr := dialer.Dial()
+		stream, dialErr := dialer.Dial()
 		if !assert.NoError(t, dialErr) {
 			return
 		}
-		defer conn.Close()
+		streams = append(streams, stream)
 	}
 
 	assert.NoError(t, connCount.AssertDelta(2), "Opening up to MaxID should have resulted in 1 connection (2 TCP sockets including server end)")
 
-	conn, err := dialer.Dial()
+	stream, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
 	}
-	defer conn.Close()
+	streams = append(streams, stream)
 
 	assert.NoError(t, connCount.AssertDelta(4), "Opening past MaxID should have resulted in 2 connections (4 TCP sockets including server end)")
+
+	// Sleep to make sure that a new session gets created
+	time.Sleep(75 * time.Millisecond)
+
+	stream, err = dialer.Dial()
+	if !assert.NoError(t, err) {
+		return
+	}
+	streams = append(streams, stream)
+
+	assert.NoError(t, connCount.AssertDelta(6), "Waiting past IdleInterval should have resulted in an additional connection for a total of 3 connections (6 TCP sockets including server end)")
+
+	closeStreams()
+	time.Sleep(ReadTimeout * 2)
+	assert.NoError(t, connCount.AssertDelta(2), "Waiting for receive loops to finish after closing streams should have resulted in only one connection remaining open (2 TCP sockets including server end)")
 }
 
 func doTestConnBasicFlow(t *testing.T) {
@@ -304,6 +331,10 @@ func doTestConnBasicFlow(t *testing.T) {
 }
 
 func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
+	return echoServerAndDialerWithIdleInterval(maxStreamsPerConn, 0)
+}
+
+func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, idleInterval time.Duration) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		return nil, nil, nil, err
@@ -382,6 +413,7 @@ func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, BoundDialer, *
 		WindowSize:        windowSize,
 		MaxPadding:        maxPadding,
 		MaxStreamsPerConn: maxStreamsPerConn,
+		IdleInterval:      idleInterval,
 		PingInterval:      testPingInterval,
 		Pool:              pool,
 		Cipher:            AES128GCM,
