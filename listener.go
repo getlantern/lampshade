@@ -13,6 +13,7 @@ type listener struct {
 	wrapped          net.Listener
 	pool             BufferPool
 	serverPrivateKey *rsa.PrivateKey
+	onError          func(conn net.Conn, err error)
 	errCh            chan error
 	connCh           chan net.Conn
 }
@@ -33,11 +34,22 @@ type listener struct {
 // serverPrivateKey - if provided, this listener will expect connections to use
 //                    encryption
 func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey) net.Listener {
+	return WrapListenerWithErrorHandler(wrapped, pool, serverPrivateKey, nil)
+}
+
+// WrapListenerWithErrorHandler is like WrapListener and also supports a
+// callback for errors on acceptnig new connections.
+func WrapListenerWithErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, onError func(net.Conn, error)) net.Listener {
+	if onError == nil {
+		onError = func(net.Conn, error) {}
+	}
+
 	// TODO: add a maxWindowSize
 	l := &listener{
 		wrapped:          wrapped,
 		pool:             pool,
 		serverPrivateKey: serverPrivateKey,
+		onError:          onError,
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
 	}
@@ -109,11 +121,15 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	// Try to read start sequence
 	_, err := io.ReadFull(conn, initMsg)
 	if err != nil {
-		return log.Errorf("Unable to read client init msg %v after %v from %v ", err, time.Since(start), conn.RemoteAddr())
+		fullErr := log.Errorf("Unable to read client init msg %v after %v from %v ", err, time.Since(start), conn.RemoteAddr())
+		l.onError(conn, fullErr)
+		return fullErr
 	}
 	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
-		return log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+		fullErr := log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+		l.onError(conn, fullErr)
+		return fullErr
 	}
 	startSession(conn, windowSize, maxPadding, 0, cs.reversed(), nil, l.pool, l.connCh, nil)
 	return nil
