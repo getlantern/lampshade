@@ -34,12 +34,12 @@ type listener struct {
 // serverPrivateKey - if provided, this listener will expect connections to use
 //                    encryption
 func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey) net.Listener {
-	return WrapListenerWithErrorHandler(wrapped, pool, serverPrivateKey, nil)
+	return WrapListenerIncludingErrorHandler(wrapped, pool, serverPrivateKey, nil)
 }
 
-// WrapListenerWithErrorHandler is like WrapListener and also supports a
-// callback for errors on acceptnig new connections.
-func WrapListenerWithErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, onError func(net.Conn, error)) net.Listener {
+// WrapListenerIncludingErrorHandler is like WrapListener and also supports a
+// callback for errors on accepting new connections.
+func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, onError func(net.Conn, error)) net.Listener {
 	if onError == nil {
 		onError = func(net.Conn, error) {}
 	}
