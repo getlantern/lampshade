@@ -465,13 +465,13 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	if readErr == nil {
 		readErr = ErrBrokenPipe
 	} else if readErr != io.EOF {
-		log.Errorf("Error on reading: %v", readErr)
+		log.Errorf("Error on reading from %v: %v", s.RemoteAddr(), readErr)
 	}
 
 	if writeErr == nil {
 		writeErr = ErrBrokenPipe
 	} else {
-		log.Errorf("Error on writing: %v", writeErr)
+		log.Errorf("Error on writing to %v: %v", s.RemoteAddr(), writeErr)
 	}
 
 	for _, c := range streams {
