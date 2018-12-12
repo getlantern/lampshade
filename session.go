@@ -124,6 +124,8 @@ func (s *session) recvLoop() {
 		}
 	}()
 
+	alreadyLoggedReceiveForClosedStream := make(map[uint16]bool)
+
 	echoTS := make([]byte, tsSize)
 	lengthBuffer := make([]byte, lenSize)
 	var sessionFrame []byte
@@ -268,8 +270,9 @@ func (s *session) recvLoop() {
 			}
 
 			c, open := s.getOrCreateStream(id)
-			if !open {
+			if !open && !alreadyLoggedReceiveForClosedStream[id] {
 				log.Debugf("Received data for closed stream %d", id)
+				alreadyLoggedReceiveForClosedStream[id] = true
 				// Stream was already closed, ignore
 				continue
 			}
