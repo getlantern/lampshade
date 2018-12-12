@@ -124,6 +124,8 @@ func (s *session) recvLoop() {
 		}
 	}()
 
+	alreadyLoggedReceiveForClosedStream := make(map[uint16]bool)
+
 	echoTS := make([]byte, tsSize)
 	lengthBuffer := make([]byte, lenSize)
 	var sessionFrame []byte
@@ -226,8 +228,9 @@ func (s *session) recvLoop() {
 				s.mx.Unlock()
 				if c != nil {
 					// Close, but don't send an RST back the other way since the other end is
-					// already closed.
-					c.close(false, nil, nil)
+					// already closed. Don't wait to close in case stream is blocked on
+					// waiting for ACKs.
+					go c.close(false, nil, nil)
 				}
 				continue
 			case frameTypePing:
@@ -269,7 +272,10 @@ func (s *session) recvLoop() {
 
 			c, open := s.getOrCreateStream(id)
 			if !open {
-				log.Debugf("Received data for closed stream %d", id)
+				if !alreadyLoggedReceiveForClosedStream[id] {
+					log.Debugf("Received data for closed stream %d", id)
+					alreadyLoggedReceiveForClosedStream[id] = true
+				}
 				// Stream was already closed, ignore
 				continue
 			}
