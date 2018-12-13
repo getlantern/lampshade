@@ -228,8 +228,9 @@ func (s *session) recvLoop() {
 				s.mx.Unlock()
 				if c != nil {
 					// Close, but don't send an RST back the other way since the other end is
-					// already closed.
-					c.close(false, nil, nil)
+					// already closed. Close on goroutine in case stream is blocked on
+					// waiting for ACKs.
+					go c.close(false, nil, nil)
 				}
 				continue
 			case frameTypePing:
@@ -270,9 +271,11 @@ func (s *session) recvLoop() {
 			}
 
 			c, open := s.getOrCreateStream(id)
-			if !open && !alreadyLoggedReceiveForClosedStream[id] {
-				log.Debugf("Received data for closed stream %d", id)
-				alreadyLoggedReceiveForClosedStream[id] = true
+			if !open {
+				if !alreadyLoggedReceiveForClosedStream[id] {
+					log.Debugf("Received data for closed stream %d", id)
+					alreadyLoggedReceiveForClosedStream[id] = true
+				}
 				// Stream was already closed, ignore
 				continue
 			}
@@ -480,7 +483,7 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	for _, c := range streams {
 		// Note - we never send an RST because the underlying connection is
 		// considered no good at this point and we won't bother sending anything.
-		c.close(false, readErr, writeErr)
+		go c.close(false, readErr, writeErr)
 	}
 
 }

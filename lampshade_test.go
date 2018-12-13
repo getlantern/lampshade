@@ -172,7 +172,7 @@ func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
 }
 
 func TestStreamCloseLocalPrematurely(t *testing.T) {
-	l, dialer, _, err := echoServerAndDialer(0)
+	l, dialer, _, err := echoServerAndDialerWithIdleInterval(0, 5000000, 0)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -182,8 +182,11 @@ func TestStreamCloseLocalPrematurely(t *testing.T) {
 	if !assert.NoError(t, err) {
 		return
 	}
+	_, err = conn.Write([]byte("this is some data"))
+	time.Sleep(200 * time.Millisecond)
 	// Close stream immediately
 	conn.Close()
+	assert.NoError(t, err)
 
 	_, err = conn.Write([]byte("stop"))
 	assert.Equal(t, ErrConnectionClosed, err)
@@ -192,6 +195,30 @@ func TestStreamCloseLocalPrematurely(t *testing.T) {
 	n, err := conn.Read(b)
 	assert.Equal(t, ErrConnectionClosed, err)
 	assert.Equal(t, 0, n)
+
+	// Now dial another connection on the same session to make sure that it works
+	// even though the first session has a bunch of un-acked packets from the
+	// server.
+	conn, err = dialer.Dial()
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer conn.Close()
+
+	_, err = conn.Write([]byte("abcd"))
+	if !assert.NoError(t, err) {
+		return
+	}
+
+	conn.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+	n, err = io.ReadFull(conn, b)
+	if !assert.NoError(t, err) {
+		return
+	}
+	if !assert.Equal(t, 4, n) {
+		return
+	}
+	assert.Equal(t, "abcd", string(b))
 }
 
 func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
@@ -238,7 +265,7 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 
 func TestConnIDExhaustion(t *testing.T) {
 	max := 100
-	l, dialer, _, err := echoServerAndDialerWithIdleInterval(uint16(max), 50*time.Millisecond)
+	l, dialer, _, err := echoServerAndDialerWithIdleInterval(uint16(max), 0, 50*time.Millisecond)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -331,10 +358,13 @@ func doTestConnBasicFlow(t *testing.T) {
 }
 
 func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
-	return echoServerAndDialerWithIdleInterval(maxStreamsPerConn, 0)
+	return echoServerAndDialerWithIdleInterval(maxStreamsPerConn, 0, 0)
 }
 
-func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, idleInterval time.Duration) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
+func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification int, idleInterval time.Duration) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
+	if amplification < 1 {
+		amplification = 1
+	}
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		return nil, nil, nil, err
@@ -388,11 +418,13 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, idleInterval 
 						conn.(Stream).Session().Close()
 						return
 					}
-					_, writeErr := conn.Write(b[:n])
-					total += n
-					if writeErr != nil {
-						log.Errorf("Error writing for echo: %v", writeErr)
-						return
+					for i := 0; i < amplification; i++ {
+						_, writeErr := conn.Write(b[:n])
+						total += n
+						if writeErr != nil {
+							log.Errorf("Error writing for echo: %v", writeErr)
+							return
+						}
 					}
 					if readErr == io.EOF {
 						return
