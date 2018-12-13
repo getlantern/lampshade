@@ -228,7 +228,7 @@ func (s *session) recvLoop() {
 				s.mx.Unlock()
 				if c != nil {
 					// Close, but don't send an RST back the other way since the other end is
-					// already closed. Don't wait to close in case stream is blocked on
+					// already closed. Close on goroutine in case stream is blocked on
 					// waiting for ACKs.
 					go c.close(false, nil, nil)
 				}
