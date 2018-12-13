@@ -483,7 +483,7 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	for _, c := range streams {
 		// Note - we never send an RST because the underlying connection is
 		// considered no good at this point and we won't bother sending anything.
-		c.close(false, readErr, writeErr)
+		go c.close(false, readErr, writeErr)
 	}
 
 }
