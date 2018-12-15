@@ -117,11 +117,11 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 func (s *session) recvLoop() {
 	atomic.AddInt64(&recvLoops, 1)
 	defer func() {
-		atomic.AddInt64(&recvLoops, -1)
 		closeErr := s.Conn.Close()
 		if closeErr != nil {
 			log.Errorf("Error closing underlying connection: %v", closeErr)
 		}
+		atomic.AddInt64(&recvLoops, -1)
 	}()
 
 	alreadyLoggedReceiveForClosedStream := make(map[uint16]bool)
