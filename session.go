@@ -26,6 +26,9 @@ var (
 	openSessions    int64
 	closingSessions int64
 	closedSessions  int64
+	openStreams     int64
+	closingStreams  int64
+	closedStreams   int64
 	recvLoops       int64
 	sendLoops       int64
 	trackStatsOnce  sync.Once
@@ -36,7 +39,8 @@ func trackStats() {
 		ops.Go(func() {
 			for {
 				time.Sleep(10 * time.Second)
-				log.Debugf("Sessions    Open: %d   Recv Loops: %d   Send Loops: %d   Closing: %d   Closed: %d", atomic.LoadInt64(&openSessions), atomic.LoadInt64(&recvLoops), atomic.LoadInt64(&sendLoops), atomic.LoadInt64(&closingSessions), atomic.LoadInt64(&closedSessions))
+				log.Debugf("Sessions    Open: %d   Closing: %d   Closed: %d   Recv Loops: %d   Send Loops: %d", atomic.LoadInt64(&openSessions), atomic.LoadInt64(&closingSessions), atomic.LoadInt64(&closedSessions), atomic.LoadInt64(&recvLoops), atomic.LoadInt64(&sendLoops))
+				log.Debugf("Streams     Open: %d   Closing: %d   Closed: %d", atomic.LoadInt64(&openStreams), atomic.LoadInt64(&closingStreams), atomic.LoadInt64(&closedStreams))
 			}
 		})
 	})
@@ -117,11 +121,11 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 func (s *session) recvLoop() {
 	atomic.AddInt64(&recvLoops, 1)
 	defer func() {
-		atomic.AddInt64(&recvLoops, -1)
 		closeErr := s.Conn.Close()
 		if closeErr != nil {
 			log.Errorf("Error closing underlying connection: %v", closeErr)
 		}
+		atomic.AddInt64(&recvLoops, -1)
 	}()
 
 	alreadyLoggedReceiveForClosedStream := make(map[uint16]bool)

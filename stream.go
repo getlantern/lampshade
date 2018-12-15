@@ -4,6 +4,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -24,6 +25,7 @@ type stream struct {
 }
 
 func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte) *stream {
+	atomic.AddInt64(&openStreams, 1)
 	return &stream{
 		Conn:    s,
 		session: s,
@@ -95,11 +97,15 @@ func (c *stream) Close() error {
 func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 	c.mx.Lock()
 	if !c.closed {
+		atomic.AddInt64(&closingStreams, 1)
 		c.closed = true
 		c.finalReadErr = readErr
 		c.finalWriteErr = writeErr
 		c.rb.close()
 		c.sb.close(sendRST)
+		atomic.AddInt64(&closingStreams, -1)
+		atomic.AddInt64(&openStreams, -1)
+		atomic.AddInt64(&closedStreams, 1)
 	}
 	c.mx.Unlock()
 	return nil
