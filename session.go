@@ -8,6 +8,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,10 +121,19 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 
 func (s *session) recvLoop() {
 	atomic.AddInt64(&recvLoops, 1)
+
+	stoppedOnExpectedEOF := false
+
 	defer func() {
 		closeErr := s.Conn.Close()
 		if closeErr != nil {
-			log.Errorf("Error closing underlying connection: %v", closeErr)
+			if stoppedOnExpectedEOF && strings.Contains(closeErr.Error(), idletiming.ErrIdled.Error()) {
+				// recvLoop stopped with an expected EOF caused by an idled connection.
+				// Closing an idled connection is expected to fail, so don't bother
+				// logging the error.
+			} else {
+				log.Errorf("Unexpected error closing underlying connection: %v", closeErr)
+			}
 		}
 		atomic.AddInt64(&recvLoops, -1)
 	}()
@@ -161,6 +171,7 @@ func (s *session) recvLoop() {
 		if err != nil {
 			if err == io.EOF {
 				s.onSessionError(err, nil)
+				stoppedOnExpectedEOF = true
 			} else {
 				s.onSessionError(fmt.Errorf("Unable to read length: %v", err), nil)
 			}
