@@ -4,7 +4,6 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 )
 
@@ -15,6 +14,10 @@ type DialerOpts struct {
 
 	// MaxPadding - maximum random padding to use when necessary.
 	MaxPadding int
+
+	// MaxConns - limits the number of physical connections.
+	//                     If <=0, defaults 1.
+	MaxConns uint16
 
 	// MaxStreamsPerConn - limits the number of streams per physical connection.
 	//                     If <=0, defaults to max uint16.
@@ -50,15 +53,21 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.WindowSize <= 0 {
 		opts.WindowSize = defaultWindowSize
 	}
+	if opts.MaxConns <= 0 || opts.MaxConns > maxID {
+		opts.MaxConns = 1
+	}
 	if opts.MaxStreamsPerConn <= 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
-	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
 		opts.WindowSize,
 		opts.MaxPadding,
+		opts.MaxConns,
 		opts.MaxStreamsPerConn,
 		opts.PingInterval,
 		opts.Cipher)
+	liveSessions := make(chan sessionInf, opts.MaxConns)
+	liveSessions <- nullSession{}
 	return &dialer{
 		windowSize:       opts.WindowSize,
 		maxPadding:       opts.MaxPadding,
@@ -68,6 +77,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		pool:             opts.Pool,
 		cipherCode:       opts.Cipher,
 		serverPublicKey:  opts.ServerPublicKey,
+		liveSessions:     liveSessions,
 	}
 }
 
@@ -80,10 +90,7 @@ type dialer struct {
 	pool             BufferPool
 	cipherCode       Cipher
 	serverPublicKey  *rsa.PublicKey
-	current          *session
-	lastDialed       time.Time
-	id               uint16
-	mx               sync.Mutex
+	liveSessions     chan sessionInf
 }
 
 func (d *dialer) Dial(dial DialFN) (net.Conn, error) {
@@ -91,56 +98,27 @@ func (d *dialer) Dial(dial DialFN) (net.Conn, error) {
 }
 
 func (d *dialer) DialStream(dial DialFN) (Stream, error) {
-	d.mx.Lock()
-	current := d.current
-	idsExhausted := false
-	if d.id > d.maxStreamPerConn {
-		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
-		idsExhausted = true
-		d.id = 0
-	}
-	idled := false
-	if d.idleInterval > 0 {
-		now := time.Now()
-		idled = now.Sub(d.lastDialed) > d.idleInterval
-		if idled {
-			log.Debugf("No new connections in %v, will start new session", d.idleInterval)
-		}
-		d.lastDialed = now
-	}
-
-	// TODO: support pooling of connections (i.e. keep multiple physical connections in flight)
-	if current == nil || idsExhausted || idled {
-		if current != nil {
-			// Need to run this on a goroutine because we call back to sessionClosed()
-			// via the session's beforeClose callback, which needs the mutex that's
-			// already locked here.
-			go current.markDefunct()
-		}
-
+	current := <-d.liveSessions
+	if !current.AllowNewStream(d.maxStreamPerConn, d.idleInterval) {
+		current.MarkDefunct()
 		var err error
 		current, err = d.startSession(dial)
 		if err != nil {
-			d.mx.Unlock()
 			return nil, err
 		}
 	}
-	id := d.id
-	d.id++
-	d.mx.Unlock()
-
-	c, _ := current.getOrCreateStream(id)
+	c := current.CreateStream()
+	d.liveSessions <- current
 	return c, nil
 }
 
 func (d *dialer) EMARTT() time.Duration {
 	var rtt time.Duration
-	d.mx.Lock()
-	current := d.current
-	d.mx.Unlock()
+	current := <-d.liveSessions
 	if current != nil {
 		rtt = current.EMARTT()
 	}
+	d.liveSessions <- current
 	return rtt
 }
 
@@ -165,20 +143,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	d.current, err = startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, cs, clientInitMsg, d.pool, nil, d.sessionClosed)
-	if err != nil {
-		return nil, fmt.Errorf("Unable to start session: %v", err)
-	}
-	return d.current, nil
-}
-
-func (d *dialer) sessionClosed(s *session) {
-	d.mx.Lock()
-	if d.current == s {
-		log.Debug("Current session no longer usable, clearing")
-		d.current = nil
-	}
-	d.mx.Unlock()
+	return startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, cs, clientInitMsg, d.pool, nil, nil)
 }
 
 type boundDialer struct {

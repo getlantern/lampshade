@@ -47,6 +47,21 @@ func trackStats() {
 	})
 }
 
+type sessionInf interface {
+	AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool
+	MarkDefunct()
+	EMARTT() time.Duration
+	CreateStream() *stream
+}
+type nullSession struct{}
+
+func (s nullSession) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
+	return false
+}
+func (s nullSession) MarkDefunct()          {}
+func (s nullSession) EMARTT() time.Duration { panic("should never be called") }
+func (s nullSession) CreateStream() *stream { panic("should never be called") }
+
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
 type session struct {
@@ -75,6 +90,8 @@ type session struct {
 	emaRTT           *ema.EMA
 	closeCh          chan struct{}
 	closeOnce        sync.Once
+	lastDialed       time.Time
+	nextID           uint16
 	mx               sync.RWMutex
 }
 
@@ -503,6 +520,12 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 
 }
 
+func (s *session) CreateStream() *stream {
+	stream, _ := s.getOrCreateStream(s.nextID)
+	s.lastDialed = time.Now()
+	return stream
+}
+
 func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	s.mx.Lock()
 	c := s.streams[id]
@@ -525,9 +548,28 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	return c, true
 }
 
-// markDefunct marks this session as defunct. A defunct session will close once
+func (s *session) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
+	s.nextID++
+	if s.nextID > maxStreamPerConn {
+		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
+		return false
+	}
+	if idleInterval > 0 {
+		now := time.Now()
+		if now.Sub(s.lastDialed) > idleInterval {
+			log.Debugf("No new connections in %v, will start new session", idleInterval)
+			return false
+		}
+	}
+	if s.isClosed() {
+		return false
+	}
+	return true
+}
+
+// MarkDefunct marks this session as defunct. A defunct session will close once
 // all streams are closed.
-func (s *session) markDefunct() {
+func (s *session) MarkDefunct() {
 	s.mx.Lock()
 	s.defunct = true
 	if len(s.streams) == 0 {
