@@ -91,7 +91,7 @@ type session struct {
 	closeCh          chan struct{}
 	closeOnce        sync.Once
 	lastDialed       time.Time
-	nextID           uint16
+	nextID           uint32
 	mx               sync.RWMutex
 }
 
@@ -120,6 +120,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
+		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -521,7 +522,8 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 }
 
 func (s *session) CreateStream() *stream {
-	stream, _ := s.getOrCreateStream(s.nextID)
+	nextID := atomic.AddUint32(&s.nextID, 1)
+	stream, _ := s.getOrCreateStream(uint16(nextID - 1))
 	s.lastDialed = time.Now()
 	return stream
 }
@@ -548,9 +550,12 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	return c, true
 }
 
-func (s *session) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
-	s.nextID++
-	if s.nextID > maxStreamPerConn {
+// AllowNewStream returns true if a new stream is allowed to be created over
+// this session, and false otherwise.
+func (s *session) AllowNewStream(maxStreamPerConn uint16, idleInterval
+time.Duration) bool {
+	nextID := atomic.LoadUint32(&s.nextID)
+	if nextID > uint32(maxStreamPerConn) {
 		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
 		return false
 	}

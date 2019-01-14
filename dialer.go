@@ -1,9 +1,12 @@
 package lampshade
 
 import (
+	"context"
 	"crypto/rsa"
+	"errors"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -15,9 +18,9 @@ type DialerOpts struct {
 	// MaxPadding - maximum random padding to use when necessary.
 	MaxPadding int
 
-	// MaxConns - limits the number of physical connections.
-	//                     If <=0, defaults 1.
-	MaxConns uint16
+	// MaxLiveConns - limits the number of live physical connections on which
+	// new streams can be created. If <=0, defaults to 1.
+	MaxLiveConns int
 
 	// MaxStreamsPerConn - limits the number of streams per physical connection.
 	//                     If <=0, defaults to max uint16.
@@ -29,6 +32,12 @@ type DialerOpts struct {
 
 	// PingInterval - how frequently to ping to calculate RTT, set to 0 to disable
 	PingInterval time.Duration
+
+	// RedialSessionInterval - how frequently to redial a new session when
+	// there's no live session, for faster recovery after network failures.
+	// Defaults to 5 seconds.
+	// See https://github.com/getlantern/lantern-internal/issues/2534
+	RedialSessionInterval time.Duration
 
 	// Pool - BufferPool to use (required)
 	Pool BufferPool
@@ -53,63 +62,115 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.WindowSize <= 0 {
 		opts.WindowSize = defaultWindowSize
 	}
-	if opts.MaxConns <= 0 || opts.MaxConns > maxID {
-		opts.MaxConns = 1
+	if opts.MaxLiveConns <= 0 {
+		opts.MaxLiveConns = 1
 	}
 	if opts.MaxStreamsPerConn <= 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
-	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
+
+	if opts.RedialSessionInterval <= 0 {
+		opts.RedialSessionInterval = 5 * time.Second
+	}
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxLiveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
 		opts.WindowSize,
 		opts.MaxPadding,
-		opts.MaxConns,
+		opts.MaxLiveConns,
 		opts.MaxStreamsPerConn,
 		opts.PingInterval,
 		opts.Cipher)
-	liveSessions := make(chan sessionInf, opts.MaxConns)
+	liveSessions := make(chan sessionInf, opts.MaxLiveConns)
 	liveSessions <- nullSession{}
 	return &dialer{
-		windowSize:       opts.WindowSize,
-		maxPadding:       opts.MaxPadding,
-		maxStreamPerConn: opts.MaxStreamsPerConn,
-		idleInterval:     opts.IdleInterval,
-		pingInterval:     opts.PingInterval,
-		pool:             opts.Pool,
-		cipherCode:       opts.Cipher,
-		serverPublicKey:  opts.ServerPublicKey,
-		liveSessions:     liveSessions,
+		windowSize:            opts.WindowSize,
+		maxPadding:            opts.MaxPadding,
+		maxStreamsPerConn:     opts.MaxStreamsPerConn,
+		maxLiveConns:          opts.MaxLiveConns,
+		idleInterval:          opts.IdleInterval,
+		pingInterval:          opts.PingInterval,
+		redialSessionInterval: opts.RedialSessionInterval,
+		pool:                  opts.Pool,
+		cipherCode:            opts.Cipher,
+		serverPublicKey:       opts.ServerPublicKey,
+		liveSessions:          liveSessions,
+		numLivePending:        1, // the nullSession
 	}
 }
 
 type dialer struct {
-	windowSize       int
-	maxPadding       int
-	maxStreamPerConn uint16
-	idleInterval     time.Duration
-	pingInterval     time.Duration
-	pool             BufferPool
-	cipherCode       Cipher
-	serverPublicKey  *rsa.PublicKey
-	liveSessions     chan sessionInf
+	windowSize            int
+	maxPadding            int
+	maxLiveConns          int
+	maxStreamsPerConn     uint16
+	idleInterval          time.Duration
+	pingInterval          time.Duration
+	redialSessionInterval time.Duration
+	pool                  BufferPool
+	cipherCode            Cipher
+	serverPublicKey       *rsa.PublicKey
+	muNumLivePending      sync.Mutex
+	numLivePending        int
+	liveSessions          chan sessionInf
 }
 
 func (d *dialer) Dial(dial DialFN) (net.Conn, error) {
-	return d.DialStream(dial)
+	return d.DialContext(context.Background(), dial)
 }
 
-func (d *dialer) DialStream(dial DialFN) (Stream, error) {
-	current := <-d.liveSessions
-	if !current.AllowNewStream(d.maxStreamPerConn, d.idleInterval) {
-		current.MarkDefunct()
-		var err error
-		current, err = d.startSession(dial)
-		if err != nil {
-			return nil, err
+func (d *dialer) DialContext(ctx context.Context, dial DialFN) (net.Conn, error) {
+	s, err := d.getOrCreateSession(ctx, dial)
+	if err != nil {
+		return nil, err
+	}
+	c := s.CreateStream()
+	d.liveSessions <- s
+	return c, nil
+}
+
+func (d *dialer) getNumLivePending() int {
+	d.muNumLivePending.Lock()
+	numLivePending := d.numLivePending
+	d.muNumLivePending.Unlock()
+	return numLivePending
+}
+
+func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionInf, error) {
+	newSession := func(cap int) {
+		d.muNumLivePending.Lock()
+		if d.numLivePending >= cap {
+			d.muNumLivePending.Unlock()
+			return
+		}
+		d.numLivePending++
+		d.muNumLivePending.Unlock()
+		go func() {
+			s, err := d.startSession(dial)
+			if err != nil {
+				d.muNumLivePending.Lock()
+				d.numLivePending--
+				d.muNumLivePending.Unlock()
+				return
+			}
+			d.liveSessions <- s
+		}()
+	}
+	for {
+		select {
+		case s := <-d.liveSessions:
+			if s.AllowNewStream(d.maxStreamsPerConn, d.idleInterval) {
+				return s, nil
+			}
+			d.muNumLivePending.Lock()
+			d.numLivePending--
+			d.muNumLivePending.Unlock()
+			s.MarkDefunct()
+			newSession(1)
+		case <-time.After(d.redialSessionInterval):
+			newSession(d.maxLiveConns)
+		case <-ctx.Done():
+			return nil, errors.New("No session available")
 		}
 	}
-	c := current.CreateStream()
-	d.liveSessions <- current
-	return c, nil
 }
 
 func (d *dialer) EMARTT() time.Duration {
@@ -156,6 +217,6 @@ func (bd *boundDialer) Dial() (net.Conn, error) {
 	return bd.Dialer.Dial(bd.dial)
 }
 
-func (bd *boundDialer) DialStream() (Stream, error) {
-	return bd.Dialer.DialStream(bd.dial)
+func (bd *boundDialer) DialContext(ctx context.Context) (net.Conn, error) {
+	return bd.Dialer.DialContext(ctx, bd.dial)
 }

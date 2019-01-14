@@ -201,6 +201,7 @@
 package lampshade
 
 import (
+	"context"
 	"encoding/binary"
 	"net"
 	"time"
@@ -306,9 +307,8 @@ type Dialer interface {
 	// DialFN to open a physical connection when necessary.
 	Dial(dial DialFN) (net.Conn, error)
 
-	// DialStream is the same as Dial but returns the internal interface for
-	// virtual connections.
-	DialStream(dial DialFN) (Stream, error)
+	// DialContext is the same as Dial but with the specific context.
+	DialContext(ctx context.Context, dial DialFN) (net.Conn, error)
 
 	// BoundTo returns a BoundDialer that uses the given DialFN to connect to the
 	// lampshade server.
@@ -323,9 +323,8 @@ type BoundDialer interface {
 	// Dial creates a virtual connection to the lampshade server.
 	Dial() (net.Conn, error)
 
-	// DialStream is the same as Dial() but returns the internal interface for
-	// virtual connectinos.
-	DialStream() (Stream, error)
+	// DialContext is the same as Dial but with the specific context.
+	DialContext(ctx context.Context) (net.Conn, error)
 }
 
 // Session is a wrapper around a net.Conn that supports multiplexing.
