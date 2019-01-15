@@ -552,8 +552,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 
 // AllowNewStream returns true if a new stream is allowed to be created over
 // this session, and false otherwise.
-func (s *session) AllowNewStream(maxStreamPerConn uint16, idleInterval
-time.Duration) bool {
+func (s *session) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
 	nextID := atomic.LoadUint32(&s.nextID)
 	if nextID > uint32(maxStreamPerConn) {
 		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
