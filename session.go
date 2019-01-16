@@ -47,10 +47,9 @@ func trackStats() {
 	})
 }
 
-type sessionInf interface {
+type sessionIntf interface {
 	AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool
 	MarkDefunct()
-	EMARTT() time.Duration
 	CreateStream() *stream
 }
 type nullSession struct{}
@@ -59,7 +58,6 @@ func (s nullSession) AllowNewStream(maxStreamPerConn uint16, idleInterval time.D
 	return false
 }
 func (s nullSession) MarkDefunct()          {}
-func (s nullSession) EMARTT() time.Duration { panic("should never be called") }
 func (s nullSession) CreateStream() *stream { panic("should never be called") }
 
 // session encapsulates the multiplexing of streams onto a single "physical"
@@ -100,7 +98,7 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -117,6 +115,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		echoOut:          make(chan []byte),
 		streams:          make(map[uint16]*stream),
 		closed:           make(map[uint16]bool),
+		emaRTT:           emaRTT,
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
@@ -128,10 +127,6 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		return nil, err
 	}
 	atomic.AddInt64(&openSessions, 1)
-	isClient := clientInitMsg != nil
-	if isClient {
-		s.emaRTT = ema.NewDuration(0, 0.5)
-	}
 	ops.Go(s.sendLoop)
 	ops.Go(s.recvLoop)
 	return s, nil
@@ -619,10 +614,6 @@ func (s *session) isClosed() bool {
 
 func (s *session) Wrapped() net.Conn {
 	return s.Conn
-}
-
-func (s *session) EMARTT() time.Duration {
-	return s.emaRTT.GetDuration()
 }
 
 type sessionWriter struct {

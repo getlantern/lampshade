@@ -8,6 +8,8 @@ import (
 	"net"
 	"sync"
 	"time"
+
+	"github.com/getlantern/ema"
 )
 
 // DialerOpts configures options for creating Dialers
@@ -79,7 +81,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		opts.MaxStreamsPerConn,
 		opts.PingInterval,
 		opts.Cipher)
-	liveSessions := make(chan sessionInf, opts.MaxLiveConns)
+	liveSessions := make(chan sessionIntf, opts.MaxLiveConns)
 	liveSessions <- nullSession{}
 	return &dialer{
 		windowSize:            opts.WindowSize,
@@ -94,6 +96,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		serverPublicKey:       opts.ServerPublicKey,
 		liveSessions:          liveSessions,
 		numLivePending:        1, // the nullSession
+		emaRTT:                ema.NewDuration(0, 0.5),
 	}
 }
 
@@ -110,7 +113,8 @@ type dialer struct {
 	serverPublicKey       *rsa.PublicKey
 	muNumLivePending      sync.Mutex
 	numLivePending        int
-	liveSessions          chan sessionInf
+	liveSessions          chan sessionIntf
+	emaRTT                *ema.EMA
 }
 
 func (d *dialer) Dial(dial DialFN) (net.Conn, error) {
@@ -134,7 +138,7 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionInf, error) {
+func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIntf, error) {
 	newSession := func(cap int) {
 		d.muNumLivePending.Lock()
 		if d.numLivePending >= cap {
@@ -174,13 +178,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 }
 
 func (d *dialer) EMARTT() time.Duration {
-	var rtt time.Duration
-	current := <-d.liveSessions
-	if current != nil {
-		rtt = current.EMARTT()
-	}
-	d.liveSessions <- current
-	return rtt
+	return d.emaRTT.GetDuration()
 }
 
 func (d *dialer) BoundTo(dial DialFN) BoundDialer {
@@ -204,7 +202,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, cs, clientInitMsg, d.pool, nil, nil)
+	return startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
 }
 
 type boundDialer struct {

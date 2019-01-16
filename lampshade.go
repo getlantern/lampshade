@@ -330,7 +330,6 @@ type BoundDialer interface {
 // Session is a wrapper around a net.Conn that supports multiplexing.
 type Session interface {
 	net.Conn
-	StatsTracking
 
 	// Wrapped() exposes access to the net.Conn that's wrapped by this Session.
 	Wrapped() net.Conn
