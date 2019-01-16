@@ -12,6 +12,10 @@ import (
 	"github.com/getlantern/ema"
 )
 
+var (
+	normalLiveConns = 1
+)
+
 // DialerOpts configures options for creating Dialers
 type DialerOpts struct {
 	// WindowSize - transmit window size in # of frames. If <= 0, defaults to 1250.
@@ -95,7 +99,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		cipherCode:            opts.Cipher,
 		serverPublicKey:       opts.ServerPublicKey,
 		liveSessions:          liveSessions,
-		numLivePending:        1, // the nullSession
+		numLive:               1, // the nullSession
 		emaRTT:                ema.NewDuration(0, 0.5),
 	}
 }
@@ -112,7 +116,8 @@ type dialer struct {
 	cipherCode            Cipher
 	serverPublicKey       *rsa.PublicKey
 	muNumLivePending      sync.Mutex
-	numLivePending        int
+	numLive               int
+	numPending            int
 	liveSessions          chan sessionIntf
 	emaRTT                *ema.EMA
 }
@@ -127,13 +132,13 @@ func (d *dialer) DialContext(ctx context.Context, dial DialFN) (net.Conn, error)
 		return nil, err
 	}
 	c := s.CreateStream()
-	d.liveSessions <- s
+	d.returnSession(s)
 	return c, nil
 }
 
 func (d *dialer) getNumLivePending() int {
 	d.muNumLivePending.Lock()
-	numLivePending := d.numLivePending
+	numLivePending := d.numLive + d.numPending
 	d.muNumLivePending.Unlock()
 	return numLivePending
 }
@@ -141,20 +146,22 @@ func (d *dialer) getNumLivePending() int {
 func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIntf, error) {
 	newSession := func(cap int) {
 		d.muNumLivePending.Lock()
-		if d.numLivePending >= cap {
+		if d.numLive+d.numPending >= cap {
 			d.muNumLivePending.Unlock()
 			return
 		}
-		d.numLivePending++
+		d.numPending++
 		d.muNumLivePending.Unlock()
 		go func() {
 			s, err := d.startSession(dial)
+			d.muNumLivePending.Lock()
+			d.numPending--
 			if err != nil {
-				d.muNumLivePending.Lock()
-				d.numLivePending--
 				d.muNumLivePending.Unlock()
 				return
 			}
+			d.numLive++
+			d.muNumLivePending.Unlock()
 			d.liveSessions <- s
 		}()
 	}
@@ -165,15 +172,30 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 				return s, nil
 			}
 			d.muNumLivePending.Lock()
-			d.numLivePending--
+			d.numLive--
 			d.muNumLivePending.Unlock()
 			s.MarkDefunct()
-			newSession(1)
+			newSession(normalLiveConns)
 		case <-time.After(d.redialSessionInterval):
 			newSession(d.maxLiveConns)
 		case <-ctx.Done():
 			return nil, errors.New("No session available")
 		}
+	}
+}
+
+func (d *dialer) returnSession(s sessionIntf) {
+	addBack := true
+	d.muNumLivePending.Lock()
+	if d.numLive > normalLiveConns {
+		d.numLive--
+		addBack = false
+	}
+	d.muNumLivePending.Unlock()
+	if addBack {
+		d.liveSessions <- s
+	} else {
+		s.MarkDefunct()
 	}
 }
 
