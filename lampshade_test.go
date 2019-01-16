@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/pprof"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -316,6 +317,63 @@ func TestConnIDExhaustion(t *testing.T) {
 	closeStreams()
 	time.Sleep(ReadTimeout * 2)
 	assert.NoError(t, connCount.AssertDelta(2), "Waiting for receive loops to finish after closing streams should have resulted in only one connection remaining open (2 TCP sockets including server end)")
+}
+
+func TestSessionPool(t *testing.T) {
+	maxStreamsPerConn := 10
+	maxLiveConns := 5
+	idleInterval := 50 * time.Millisecond
+	redialSessionInterval := 10 * time.Millisecond
+	l, d, _, err := echoServerAndDialerWithIdleInterval(uint16(maxStreamsPerConn), 0, idleInterval)
+	if !assert.NoError(t, err) {
+		return
+	}
+	defer l.Close()
+	bd := d.(*boundDialer)
+	rd := bd.Dialer.(*dialer)
+	rd.maxLiveConns = maxLiveConns
+	rd.redialSessionInterval = redialSessionInterval
+	oldDial := bd.dial
+	var delay int64
+	bd.dial = func() (net.Conn, error) {
+		d := time.Duration(atomic.LoadInt64(&delay))
+		time.Sleep(d)
+		return oldDial()
+	}
+	dialNTimes := func(wg sync.WaitGroup, n int) {
+		wg.Add(n)
+		for i := 0; i < n; i++ {
+			go func() {
+				conn, err := d.Dial()
+				if !assert.NoError(t, err) {
+					t.Fatal("Can't dial")
+				}
+				wg.Done()
+				conn.Close()
+			}()
+		}
+	}
+
+	var wg sync.WaitGroup
+	dialNTimes(wg, maxStreamsPerConn)
+	wg.Wait()
+	assert.EqualValues(t, 1, rd.getNumLivePending())
+
+	log.Debug("******Setting delay to 2 second")
+	atomic.StoreInt64(&delay, int64(2*time.Second))
+	dialNTimes(wg, maxStreamsPerConn)
+	time.Sleep(1 * time.Second)
+	assert.EqualValues(t, maxLiveConns, rd.getNumLivePending(), "Should dial up to MaxLiveConns sessions when network becomes unusable")
+
+	log.Debug("******Clearing delay")
+	atomic.StoreInt64(&delay, 0)
+	wg.Wait() // Make sure streams can be created after network recovers
+	assert.EqualValues(t, maxLiveConns, rd.getNumLivePending(), "Should keep the live sessions when network recovers")
+
+	time.Sleep(2 * time.Second)
+	dialNTimes(wg, maxStreamsPerConn)
+	wg.Wait()
+	assert.EqualValues(t, 1, rd.getNumLivePending(), "Only one live session should be left after idling for a while")
 }
 
 func doTestConnBasicFlow(t *testing.T) {

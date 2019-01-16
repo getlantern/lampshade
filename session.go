@@ -47,6 +47,19 @@ func trackStats() {
 	})
 }
 
+type sessionIntf interface {
+	AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool
+	MarkDefunct()
+	CreateStream() *stream
+}
+type nullSession struct{}
+
+func (s nullSession) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
+	return false
+}
+func (s nullSession) MarkDefunct()          {}
+func (s nullSession) CreateStream() *stream { panic("should never be called") }
+
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
 type session struct {
@@ -75,6 +88,8 @@ type session struct {
 	emaRTT           *ema.EMA
 	closeCh          chan struct{}
 	closeOnce        sync.Once
+	lastDialed       time.Time
+	nextID           uint32
 	mx               sync.RWMutex
 }
 
@@ -83,7 +98,7 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -100,9 +115,11 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		echoOut:          make(chan []byte),
 		streams:          make(map[uint16]*stream),
 		closed:           make(map[uint16]bool),
+		emaRTT:           emaRTT,
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
+		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -110,10 +127,6 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval ti
 		return nil, err
 	}
 	atomic.AddInt64(&openSessions, 1)
-	isClient := clientInitMsg != nil
-	if isClient {
-		s.emaRTT = ema.NewDuration(0, 0.5)
-	}
 	ops.Go(s.sendLoop)
 	ops.Go(s.recvLoop)
 	return s, nil
@@ -503,6 +516,13 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 
 }
 
+func (s *session) CreateStream() *stream {
+	nextID := atomic.AddUint32(&s.nextID, 1)
+	stream, _ := s.getOrCreateStream(uint16(nextID - 1))
+	s.lastDialed = time.Now()
+	return stream
+}
+
 func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	s.mx.Lock()
 	c := s.streams[id]
@@ -525,9 +545,30 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 	return c, true
 }
 
-// markDefunct marks this session as defunct. A defunct session will close once
+// AllowNewStream returns true if a new stream is allowed to be created over
+// this session, and false otherwise.
+func (s *session) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
+	nextID := atomic.LoadUint32(&s.nextID)
+	if nextID > uint32(maxStreamPerConn) {
+		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
+		return false
+	}
+	if idleInterval > 0 {
+		now := time.Now()
+		if now.Sub(s.lastDialed) > idleInterval {
+			log.Debugf("No new connections in %v, will start new session", idleInterval)
+			return false
+		}
+	}
+	if s.isClosed() {
+		return false
+	}
+	return true
+}
+
+// MarkDefunct marks this session as defunct. A defunct session will close once
 // all streams are closed.
-func (s *session) markDefunct() {
+func (s *session) MarkDefunct() {
 	s.mx.Lock()
 	s.defunct = true
 	if len(s.streams) == 0 {
@@ -573,10 +614,6 @@ func (s *session) isClosed() bool {
 
 func (s *session) Wrapped() net.Conn {
 	return s.Conn
-}
-
-func (s *session) EMARTT() time.Duration {
-	return s.emaRTT.GetDuration()
 }
 
 type sessionWriter struct {
