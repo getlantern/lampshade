@@ -12,8 +12,8 @@ import (
 	"github.com/getlantern/ema"
 )
 
-var (
-	normalLiveConns = 1
+const (
+	minLiveConns = 1
 )
 
 // DialerOpts configures options for creating Dialers
@@ -175,7 +175,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 			d.numLive--
 			d.muNumLivePending.Unlock()
 			s.MarkDefunct()
-			newSession(normalLiveConns)
+			newSession(minLiveConns)
 		case <-time.After(d.redialSessionInterval):
 			newSession(d.maxLiveConns)
 		case <-ctx.Done():
@@ -187,7 +187,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 func (d *dialer) returnSession(s sessionIntf) {
 	addBack := true
 	d.muNumLivePending.Lock()
-	if d.numLive > normalLiveConns {
+	if d.numLive > minLiveConns {
 		d.numLive--
 		addBack = false
 	}

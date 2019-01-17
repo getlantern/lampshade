@@ -373,7 +373,7 @@ func TestSessionPool(t *testing.T) {
 	dialNTimes(wg, maxLiveConns-1) // drain all but one of the live sessions
 	wg.Wait()
 	time.Sleep(10 * redialSessionInterval)
-	assert.EqualValues(t, normalLiveConns, rd.getNumLivePending(), "Only one live session should be left after dialing a few")
+	assert.EqualValues(t, minLiveConns, rd.getNumLivePending(), "Only one live session should be left after dialing a few")
 	t.Logf("%v pyhsical connections in total were dialed", atomic.LoadInt64(&dialed))
 }
 
