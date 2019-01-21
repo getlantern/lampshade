@@ -322,9 +322,8 @@ func TestConnIDExhaustion(t *testing.T) {
 func TestSessionPool(t *testing.T) {
 	maxStreamsPerConn := 10
 	maxLiveConns := 5
-	idleInterval := 50 * time.Millisecond
 	redialSessionInterval := 10 * time.Millisecond
-	l, d, _, err := echoServerAndDialerWithIdleInterval(uint16(maxStreamsPerConn), 0, idleInterval)
+	l, d, _, err := echoServerAndDialer(uint16(maxStreamsPerConn))
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -335,9 +334,11 @@ func TestSessionPool(t *testing.T) {
 	rd.redialSessionInterval = redialSessionInterval
 	oldDial := bd.dial
 	var delay int64
+	var dialed int64
 	bd.dial = func() (net.Conn, error) {
 		d := time.Duration(atomic.LoadInt64(&delay))
 		time.Sleep(d)
+		atomic.AddInt64(&dialed, 1)
 		return oldDial()
 	}
 	dialNTimes := func(wg sync.WaitGroup, n int) {
@@ -357,23 +358,23 @@ func TestSessionPool(t *testing.T) {
 	var wg sync.WaitGroup
 	dialNTimes(wg, maxStreamsPerConn)
 	wg.Wait()
-	assert.EqualValues(t, 1, rd.getNumLivePending())
+	assert.EqualValues(t, 1, rd.getNumLivePending(), "Opening up to MaxID should have resulted in 1 session")
 
-	log.Debug("******Setting delay to 2 second")
-	atomic.StoreInt64(&delay, int64(2*time.Second))
+	atomic.StoreInt64(&delay, int64(10*redialSessionInterval))
 	dialNTimes(wg, maxStreamsPerConn)
-	time.Sleep(1 * time.Second)
+	time.Sleep(5 * redialSessionInterval)
 	assert.EqualValues(t, maxLiveConns, rd.getNumLivePending(), "Should dial up to MaxLiveConns sessions when network becomes unusable")
 
-	log.Debug("******Clearing delay")
 	atomic.StoreInt64(&delay, 0)
 	wg.Wait() // Make sure streams can be created after network recovers
 	assert.EqualValues(t, maxLiveConns, rd.getNumLivePending(), "Should keep the live sessions when network recovers")
 
-	time.Sleep(2 * time.Second)
-	dialNTimes(wg, maxStreamsPerConn)
+	time.Sleep(10 * redialSessionInterval)
+	dialNTimes(wg, maxLiveConns-1) // drain all but one of the live sessions
 	wg.Wait()
-	assert.EqualValues(t, 1, rd.getNumLivePending(), "Only one live session should be left after idling for a while")
+	time.Sleep(10 * redialSessionInterval)
+	assert.EqualValues(t, minLiveConns, rd.getNumLivePending(), "Only one live session should be left after dialing a few")
+	t.Logf("%v pyhsical connections in total were dialed", atomic.LoadInt64(&dialed))
 }
 
 func doTestConnBasicFlow(t *testing.T) {
