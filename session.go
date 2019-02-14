@@ -396,7 +396,7 @@ func (snd *sender) send(frame []byte) (open bool) {
 			snd.onSessionError(nil, randErr)
 			return
 		}
-		l := int(randLength.Int64())
+		l := int(randLength.Int64() + 1)
 		if log.IsTraceEnabled() {
 			log.Tracef("Adding random padding of length: %d", l)
 		}
