@@ -441,7 +441,7 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification
 	}
 
 	pool := NewBufferPool(100)
-	l := WrapListener(wrapped, pool, pk.RSA())
+	l := WrapListener(wrapped, pool, pk.RSA(), false)
 
 	var wg sync.WaitGroup
 	go func() {
@@ -542,7 +542,7 @@ func TestConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to listen: %v", err)
 	}
-	lst := WrapListener(_lst, pool, pk.RSA())
+	lst := WrapListener(_lst, pool, pk.RSA(), true)
 
 	go func() {
 		for {
@@ -642,7 +642,7 @@ func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA())
+	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA(), true)
 
 	conn, err := NewDialer(&DialerOpts{
 		WindowSize:      25,

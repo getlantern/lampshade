@@ -13,6 +13,7 @@ type listener struct {
 	wrapped          net.Listener
 	pool             BufferPool
 	serverPrivateKey *rsa.PrivateKey
+	ackOnFirst       bool
 	onError          func(conn net.Conn, err error)
 	errCh            chan error
 	connCh           chan net.Conn
@@ -33,13 +34,16 @@ type listener struct {
 //
 // serverPrivateKey - if provided, this listener will expect connections to use
 //                    encryption
-func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey) net.Listener {
-	return WrapListenerIncludingErrorHandler(wrapped, pool, serverPrivateKey, nil)
+//
+// ackOnFirst - forces an immediate ACK after receiving the first frame, which could help defeat timing attacks
+//
+func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool) net.Listener {
+	return WrapListenerIncludingErrorHandler(wrapped, pool, serverPrivateKey, ackOnFirst, nil)
 }
 
 // WrapListenerIncludingErrorHandler is like WrapListener and also supports a
 // callback for errors on accepting new connections.
-func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, onError func(net.Conn, error)) net.Listener {
+func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error)) net.Listener {
 	if onError == nil {
 		onError = func(net.Conn, error) {}
 	}
@@ -49,6 +53,7 @@ func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, se
 		wrapped:          wrapped,
 		pool:             pool,
 		serverPrivateKey: serverPrivateKey,
+		ackOnFirst:       ackOnFirst,
 		onError:          onError,
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
@@ -131,6 +136,6 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		l.onError(conn, fullErr)
 		return fullErr
 	}
-	startSession(conn, windowSize, maxPadding, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
+	startSession(conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
 	return nil
 }

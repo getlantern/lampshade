@@ -68,6 +68,7 @@ type session struct {
 	maxPadding       *big.Int
 	paddingEnabled   bool
 	cipherOverhead   int
+	ackOnFirst       bool
 	metaDecrypt      func([]byte) // decrypt in place
 	metaEncrypt      func([]byte) // encrypt in place
 	dataDecrypt      func([]byte) ([]byte, error)
@@ -98,12 +99,13 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(conn net.Conn, windowSize int, maxPadding int, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
 		maxPadding:       big.NewInt(int64(maxPadding)),
 		paddingEnabled:   maxPadding > 0,
+		ackOnFirst:       ackOnFirst,
 		cipherOverhead:   cs.cipherCode.overhead(),
 		clientInitMsg:    clientInitMsg,
 		pool:             pool,
@@ -213,6 +215,7 @@ func (s *session) recvLoop() {
 
 		r := bytes.NewReader(sessionFrame)
 
+		first := true
 		// Read stream frames
 	frameLoop:
 		for {
@@ -308,6 +311,14 @@ func (s *session) recvLoop() {
 				continue
 			}
 			c.rb.submit(b)
+
+			if first {
+				if s.ackOnFirst {
+					// immediately send an empty ack to thwart timing attacks
+					c.rb.doSendACK(0)
+				}
+				first = false
+			}
 		}
 	}
 }

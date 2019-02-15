@@ -33,7 +33,7 @@ func ExampleWrapListener() {
 		return
 	}
 
-	ll := WrapListener(l, NewBufferPool(100), pk.RSA())
+	ll := WrapListener(l, NewBufferPool(100), pk.RSA(), true)
 	for {
 		conn, err := ll.Accept()
 		if err != nil {
