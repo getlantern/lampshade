@@ -145,7 +145,11 @@ func (buf *receiveBuffer) sendACK() {
 		// Don't bother acking
 		return
 	}
-	buf.ack.Write(ackWithFrames(buf.defaultHeader, int32(buf.unacked)))
+	buf.doSendACK(buf.unacked)
+}
+
+func (buf *receiveBuffer) doSendACK(unacked int) {
+	buf.ack.Write(ackWithFrames(buf.defaultHeader, int32(unacked)))
 }
 
 func (buf *receiveBuffer) onFrame(frame []byte) {

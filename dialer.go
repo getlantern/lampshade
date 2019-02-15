@@ -95,12 +95,12 @@ func NewDialer(opts *DialerOpts) Dialer {
 		idleInterval:          opts.IdleInterval,
 		pingInterval:          opts.PingInterval,
 		redialSessionInterval: opts.RedialSessionInterval,
-		pool:                  opts.Pool,
-		cipherCode:            opts.Cipher,
-		serverPublicKey:       opts.ServerPublicKey,
-		liveSessions:          liveSessions,
-		numLive:               1, // the nullSession
-		emaRTT:                ema.NewDuration(0, 0.5),
+		pool:            opts.Pool,
+		cipherCode:      opts.Cipher,
+		serverPublicKey: opts.ServerPublicKey,
+		liveSessions:    liveSessions,
+		numLive:         1, // the nullSession
+		emaRTT:          ema.NewDuration(0, 0.5),
 	}
 }
 
@@ -224,7 +224,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(conn, d.windowSize, d.maxPadding, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
+	return startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
 }
 
 type boundDialer struct {
