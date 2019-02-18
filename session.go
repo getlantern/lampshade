@@ -366,6 +366,30 @@ func (s *session) send(frame []byte) (open bool) {
 	return
 }
 
+// addPadding adds random sized padding to the byte slice. The size is capped
+// by s.maxPadding and the slice length, whichever is lower. The slice is then
+// zeroed out. It returns the padding size if there's no error.
+func (s *session) addPadding(b []byte) (int, error) {
+	if !s.paddingEnabled {
+		return 0, nil
+	}
+	padding, err := rand.Int(rand.Reader, s.maxPadding)
+	if err != nil {
+		return 0, err
+	}
+	l := int(padding.Int64() + 1) // have at least 1 byte of padding
+	if l > len(b) {
+		l = len(b)
+	}
+	if log.IsTraceEnabled() {
+		log.Tracef("Adding random padding of length: %d", l)
+	}
+	for i := 0; i < l; i++ {
+		b[i] = 0
+	}
+	return l, nil
+}
+
 type sender struct {
 	*session
 	coalescedBytes int
@@ -375,15 +399,19 @@ type sender struct {
 }
 
 func (snd *sender) send(frame []byte) (open bool) {
-	// Coalesce pending writes. This helps with performance and blocking
-	// resistence by combining packets.
+	forcePadding := false
 	if snd.clientInitMsg != nil {
 		// Lazily send client init message with first data, but don't encrypt
 		copy(snd.sendSessionFrame, snd.clientInitMsg)
 		// Push start of data right
 		snd.startOfData += clientInitSize
 		snd.clientInitMsg = nil
+		// always add padding to the first packet
+		forcePadding = true
 	}
+
+	// Coalesce pending writes. This helps with performance and blocking
+	// resistence by combining packets.
 	snd.bufferFrame(frame)
 	open = snd.coalesceAdditionalFrames()
 
@@ -399,21 +427,13 @@ func (snd *sender) send(frame []byte) (open bool) {
 		log.Tracef("Coalesced %d for total of %d", snd.coalesced, snd.coalescedBytes)
 	}
 
-	needsPadding := snd.paddingEnabled && snd.coalesced == 1 && snd.coalescedBytes+snd.startOfData < coalesceThreshold
-	if needsPadding {
-		// Add random padding whenever we failed to coalesce
-		randLength, randErr := rand.Int(rand.Reader, snd.maxPadding)
-		if randErr != nil {
-			snd.onSessionError(nil, randErr)
+	// Add random padding whenever we failed to coalesce
+	startOfPadding := snd.startOfData + snd.coalescedBytes
+	if forcePadding || (snd.coalesced == 1 && startOfPadding < coalesceThreshold) {
+		l, err := snd.addPadding(snd.sendSessionFrame[startOfPadding:])
+		if err != nil {
+			snd.onSessionError(nil, err)
 			return
-		}
-		l := int(randLength.Int64() + 1)
-		if log.IsTraceEnabled() {
-			log.Tracef("Adding random padding of length: %d", l)
-		}
-		for i := snd.startOfData + snd.coalescedBytes; i < snd.startOfData+snd.coalescedBytes+l; i++ {
-			// Zero out area of random padding
-			snd.sendSessionFrame[i] = 0
 		}
 		snd.coalescedBytes += l
 	}
