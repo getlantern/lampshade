@@ -366,6 +366,30 @@ func (s *session) send(frame []byte) (open bool) {
 	return
 }
 
+func (s *session) writeToWire(b []byte, startOfFrame, frameSize int, withPadding bool) (int, error) {
+	startOfPadding := startOfFrame + frameSize
+	if withPadding && startOfPadding < coalesceThreshold {
+		l, err := s.addPadding(b[startOfPadding:])
+		if err != nil {
+			return 0, err
+		}
+		frameSize += l
+	}
+
+	framesData := b[startOfFrame : startOfFrame+frameSize]
+	// Encrypt session frame with MAC appended
+	encryptedFramesData := s.dataEncrypt(framesData, framesData)
+	frameSize = len(encryptedFramesData)
+
+	// Add length header before data
+	lenBuf := b[startOfFrame-lenSize:]
+	lenBuf = lenBuf[:lenSize]
+	binaryEncoding.PutUint16(lenBuf, uint16(frameSize))
+	s.metaEncrypt(lenBuf)
+
+	return s.Write(b[:startOfFrame+frameSize])
+}
+
 // addPadding adds random sized padding to the byte slice. The size is capped
 // by s.maxPadding and the slice length, whichever is lower. The slice is then
 // zeroed out. It returns the padding size if there's no error.
@@ -426,35 +450,12 @@ func (snd *sender) send(frame []byte) (open bool) {
 	if log.IsTraceEnabled() {
 		log.Tracef("Coalesced %d for total of %d", snd.coalesced, snd.coalescedBytes)
 	}
-
 	// Add random padding whenever we failed to coalesce
-	startOfPadding := snd.startOfData + snd.coalescedBytes
-	if forcePadding || (snd.coalesced == 1 && startOfPadding < coalesceThreshold) {
-		l, err := snd.addPadding(snd.sendSessionFrame[startOfPadding:])
-		if err != nil {
-			snd.onSessionError(nil, err)
-			return
-		}
-		snd.coalescedBytes += l
-	}
-
-	framesData := snd.sendSessionFrame[snd.startOfData : snd.startOfData+snd.coalescedBytes]
-	// Encrypt session frame
-	encryptedFramesData := snd.dataEncrypt(framesData, framesData)
-	snd.coalescedBytes = len(encryptedFramesData)
-
-	// Add length header before data
-	lenBuf := snd.sendSessionFrame[snd.startOfData-lenSize:]
-	lenBuf = lenBuf[:lenSize]
-	binaryEncoding.PutUint16(lenBuf, uint16(snd.coalescedBytes))
-	snd.metaEncrypt(lenBuf)
-
-	// Write session frame to wire
-	_, err := snd.Write(snd.sendSessionFrame[:snd.startOfData+snd.coalescedBytes])
+	withPadding := forcePadding || snd.coalesced == 1
+	_, err := snd.writeToWire(snd.sendSessionFrame, snd.startOfData, snd.coalescedBytes, withPadding)
 	if err != nil {
 		snd.onSessionError(nil, err)
 	}
-
 	return
 }
 
