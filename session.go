@@ -73,7 +73,6 @@ type session struct {
 	metaEncrypt      func([]byte) // encrypt in place
 	dataDecrypt      func([]byte) ([]byte, error)
 	dataEncrypt      func(dst []byte, src []byte) []byte
-	clientInitMsg    []byte
 	pool             BufferPool
 	pingInterval     time.Duration
 	lastPing         time.Time
@@ -107,7 +106,6 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		paddingEnabled:   maxPadding > 0,
 		ackOnFirst:       ackOnFirst,
 		cipherOverhead:   cs.cipherCode.overhead(),
-		clientInitMsg:    clientInitMsg,
 		pool:             pool,
 		pingInterval:     pingInterval,
 		lastPing:         time.Now(),
@@ -131,7 +129,20 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 	atomic.AddInt64(&openSessions, 1)
 	ops.Go(s.sendLoop)
 	ops.Go(s.recvLoop)
+	if clientInitMsg != nil {
+		s.sendClientInitMsg(clientInitMsg)
+	}
 	return s, nil
+}
+
+func (s *session) sendClientInitMsg(clientInitMsg []byte) {
+	// Client init message is already encrypted
+	copy(s.sendSessionFrame, clientInitMsg)
+	// send an empty frame with padding to randomize the size of the packet
+	_, err := s.writeToWire(s.sendSessionFrame, clientInitSize+lenSize, 0, true)
+	if err != nil {
+		s.onSessionError(nil, err)
+	}
 }
 
 func (s *session) recvLoop() {
@@ -423,17 +434,6 @@ type sender struct {
 }
 
 func (snd *sender) send(frame []byte) (open bool) {
-	forcePadding := false
-	if snd.clientInitMsg != nil {
-		// Lazily send client init message with first data, but don't encrypt
-		copy(snd.sendSessionFrame, snd.clientInitMsg)
-		// Push start of data right
-		snd.startOfData += clientInitSize
-		snd.clientInitMsg = nil
-		// always add padding to the first packet
-		forcePadding = true
-	}
-
 	// Coalesce pending writes. This helps with performance and blocking
 	// resistence by combining packets.
 	snd.bufferFrame(frame)
@@ -450,9 +450,10 @@ func (snd *sender) send(frame []byte) (open bool) {
 	if log.IsTraceEnabled() {
 		log.Tracef("Coalesced %d for total of %d", snd.coalesced, snd.coalescedBytes)
 	}
-	// Add random padding whenever we failed to coalesce
-	withPadding := forcePadding || snd.coalesced == 1
-	_, err := snd.writeToWire(snd.sendSessionFrame, snd.startOfData, snd.coalescedBytes, withPadding)
+
+	_, err := snd.writeToWire(snd.sendSessionFrame,
+		snd.startOfData, snd.coalescedBytes,
+		snd.coalesced == 1) // Add random padding whenever we failed to coalesce
 	if err != nil {
 		snd.onSessionError(nil, err)
 	}
