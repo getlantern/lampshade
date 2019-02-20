@@ -127,11 +127,11 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		return nil, err
 	}
 	atomic.AddInt64(&openSessions, 1)
-	ops.Go(s.sendLoop)
-	ops.Go(s.recvLoop)
 	if clientInitMsg != nil {
 		s.sendClientInitMsg(clientInitMsg)
 	}
+	ops.Go(s.sendLoop)
+	ops.Go(s.recvLoop)
 	return s, nil
 }
 
