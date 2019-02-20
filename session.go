@@ -73,7 +73,6 @@ type session struct {
 	metaEncrypt      func([]byte) // encrypt in place
 	dataDecrypt      func([]byte) ([]byte, error)
 	dataEncrypt      func(dst []byte, src []byte) []byte
-	clientInitMsg    []byte
 	pool             BufferPool
 	pingInterval     time.Duration
 	lastPing         time.Time
@@ -107,7 +106,6 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		paddingEnabled:   maxPadding > 0,
 		ackOnFirst:       ackOnFirst,
 		cipherOverhead:   cs.cipherCode.overhead(),
-		clientInitMsg:    clientInitMsg,
 		pool:             pool,
 		pingInterval:     pingInterval,
 		lastPing:         time.Now(),
@@ -129,9 +127,22 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		return nil, err
 	}
 	atomic.AddInt64(&openSessions, 1)
+	if clientInitMsg != nil {
+		s.sendClientInitMsg(clientInitMsg)
+	}
 	ops.Go(s.sendLoop)
 	ops.Go(s.recvLoop)
 	return s, nil
+}
+
+func (s *session) sendClientInitMsg(clientInitMsg []byte) {
+	// Client init message is already encrypted
+	copy(s.sendSessionFrame, clientInitMsg)
+	// send an empty frame with padding to randomize the size of the packet
+	_, err := s.writeToWire(s.sendSessionFrame, clientInitSize+lenSize, 0, true)
+	if err != nil {
+		s.onSessionError(nil, err)
+	}
 }
 
 func (s *session) recvLoop() {
@@ -366,6 +377,54 @@ func (s *session) send(frame []byte) (open bool) {
 	return
 }
 
+func (s *session) writeToWire(b []byte, startOfFrame, frameSize int, withPadding bool) (int, error) {
+	startOfPadding := startOfFrame + frameSize
+	if withPadding && startOfPadding < coalesceThreshold {
+		l, err := s.addPadding(b[startOfPadding:])
+		if err != nil {
+			return 0, err
+		}
+		frameSize += l
+	}
+
+	framesData := b[startOfFrame : startOfFrame+frameSize]
+	// Encrypt session frame with MAC appended
+	encryptedFramesData := s.dataEncrypt(framesData, framesData)
+	frameSize = len(encryptedFramesData)
+
+	// Add length header before data
+	lenBuf := b[startOfFrame-lenSize:]
+	lenBuf = lenBuf[:lenSize]
+	binaryEncoding.PutUint16(lenBuf, uint16(frameSize))
+	s.metaEncrypt(lenBuf)
+
+	return s.Write(b[:startOfFrame+frameSize])
+}
+
+// addPadding adds random sized padding to the byte slice. The size is capped
+// by s.maxPadding and the slice length, whichever is lower. The slice is then
+// zeroed out. It returns the padding size if there's no error.
+func (s *session) addPadding(b []byte) (int, error) {
+	if !s.paddingEnabled {
+		return 0, nil
+	}
+	padding, err := rand.Int(rand.Reader, s.maxPadding)
+	if err != nil {
+		return 0, err
+	}
+	l := int(padding.Int64() + 1) // have at least 1 byte of padding
+	if l > len(b) {
+		l = len(b)
+	}
+	if log.IsTraceEnabled() {
+		log.Tracef("Adding random padding of length: %d", l)
+	}
+	for i := 0; i < l; i++ {
+		b[i] = 0
+	}
+	return l, nil
+}
+
 type sender struct {
 	*session
 	coalescedBytes int
@@ -377,13 +436,6 @@ type sender struct {
 func (snd *sender) send(frame []byte) (open bool) {
 	// Coalesce pending writes. This helps with performance and blocking
 	// resistence by combining packets.
-	if snd.clientInitMsg != nil {
-		// Lazily send client init message with first data, but don't encrypt
-		copy(snd.sendSessionFrame, snd.clientInitMsg)
-		// Push start of data right
-		snd.startOfData += clientInitSize
-		snd.clientInitMsg = nil
-	}
 	snd.bufferFrame(frame)
 	open = snd.coalesceAdditionalFrames()
 
@@ -399,42 +451,12 @@ func (snd *sender) send(frame []byte) (open bool) {
 		log.Tracef("Coalesced %d for total of %d", snd.coalesced, snd.coalescedBytes)
 	}
 
-	needsPadding := snd.paddingEnabled && snd.coalesced == 1 && snd.coalescedBytes+snd.startOfData < coalesceThreshold
-	if needsPadding {
-		// Add random padding whenever we failed to coalesce
-		randLength, randErr := rand.Int(rand.Reader, snd.maxPadding)
-		if randErr != nil {
-			snd.onSessionError(nil, randErr)
-			return
-		}
-		l := int(randLength.Int64() + 1)
-		if log.IsTraceEnabled() {
-			log.Tracef("Adding random padding of length: %d", l)
-		}
-		for i := snd.startOfData + snd.coalescedBytes; i < snd.startOfData+snd.coalescedBytes+l; i++ {
-			// Zero out area of random padding
-			snd.sendSessionFrame[i] = 0
-		}
-		snd.coalescedBytes += l
-	}
-
-	framesData := snd.sendSessionFrame[snd.startOfData : snd.startOfData+snd.coalescedBytes]
-	// Encrypt session frame
-	encryptedFramesData := snd.dataEncrypt(framesData, framesData)
-	snd.coalescedBytes = len(encryptedFramesData)
-
-	// Add length header before data
-	lenBuf := snd.sendSessionFrame[snd.startOfData-lenSize:]
-	lenBuf = lenBuf[:lenSize]
-	binaryEncoding.PutUint16(lenBuf, uint16(snd.coalescedBytes))
-	snd.metaEncrypt(lenBuf)
-
-	// Write session frame to wire
-	_, err := snd.Write(snd.sendSessionFrame[:snd.startOfData+snd.coalescedBytes])
+	_, err := snd.writeToWire(snd.sendSessionFrame,
+		snd.startOfData, snd.coalescedBytes,
+		snd.coalesced == 1) // Add random padding whenever we failed to coalesce
 	if err != nil {
 		snd.onSessionError(nil, err)
 	}
-
 	return
 }
 
