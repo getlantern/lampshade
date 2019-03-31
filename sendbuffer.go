@@ -66,6 +66,9 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 		buf.closing = true
 		close(buf.in)
 		buf.muClosing.Unlock()
+		if !closeTimer.Stop() {
+			<-closeTimer.C
+		}
 		closeTimer.Reset(closeTimeout)
 	}
 
