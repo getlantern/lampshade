@@ -66,6 +66,9 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 		buf.closing = true
 		close(buf.in)
 		buf.muClosing.Unlock()
+		if !closeTimer.Stop() {
+			<-closeTimer.C
+		}
 		closeTimer.Reset(closeTimeout)
 	}
 
@@ -126,6 +129,9 @@ func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
 	now := time.Now()
 	if writeDeadline.Before(now) {
 		return 0, ErrTimeout
+	}
+	if !buf.writeTimer.Stop() {
+		<-buf.writeTimer.C
 	}
 	buf.writeTimer.Reset(writeDeadline.Sub(now))
 	select {
