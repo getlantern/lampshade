@@ -127,6 +127,9 @@ func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
 	if writeDeadline.Before(now) {
 		return 0, ErrTimeout
 	}
+	if !buf.writeTimer.Stop() {
+		<-buf.writeTimer.C
+	}
 	buf.writeTimer.Reset(writeDeadline.Sub(now))
 	select {
 	case buf.in <- b:
