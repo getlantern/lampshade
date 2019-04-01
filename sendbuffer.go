@@ -60,16 +60,19 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 		buf.closed.Done()
 	}()
 
-	closeTimer := time.NewTimer(largeTimeout)
+	closeTimedOut := make(chan interface{})
+	var closeOnce sync.Once
 	signalClose := func() {
-		buf.muClosing.Lock()
-		buf.closing = true
-		close(buf.in)
-		buf.muClosing.Unlock()
-		if !closeTimer.Stop() {
-			<-closeTimer.C
-		}
-		closeTimer.Reset(closeTimeout)
+		closeOnce.Do(func() {
+			go func() {
+				buf.muClosing.Lock()
+				buf.closing = true
+				close(buf.in)
+				buf.muClosing.Unlock()
+				time.Sleep(closeTimeout)
+				close(closeTimedOut)
+			}()
+		})
 	}
 
 	for {
@@ -83,12 +86,12 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 					w.Write(append(frame, buf.defaultHeader...))
 				case sendRST = <-buf.closeRequested:
 					// close requested before window available
-					go signalClose()
+					signalClose()
 					select {
 					case <-windowAvailable:
 						// send allowed
 						w.Write(append(frame, buf.defaultHeader...))
-					case <-closeTimer.C:
+					case <-closeTimedOut:
 						// closed before window available
 						return
 					}
@@ -99,8 +102,8 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 				return
 			}
 		case sendRST = <-buf.closeRequested:
-			go signalClose()
-		case <-closeTimer.C:
+			signalClose()
+		case <-closeTimedOut:
 			// We had queued writes, but we haven't gotten any acks within
 			// closeTimeout of closing, don't wait any longer
 			return
