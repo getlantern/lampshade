@@ -61,18 +61,18 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 	}()
 
 	closeTimedOut := make(chan interface{})
+	var closeOnce sync.Once
 	signalClose := func() {
-		go func() {
-			buf.muClosing.Lock()
-			alreadyClosed := buf.closing
-			buf.closing = true
-			close(buf.in)
-			buf.muClosing.Unlock()
-			if !alreadyClosed {
+		closeOnce.Do(func() {
+			go func() {
+				buf.muClosing.Lock()
+				buf.closing = true
+				close(buf.in)
+				buf.muClosing.Unlock()
 				time.Sleep(closeTimeout)
 				close(closeTimedOut)
-			}
-		}()
+			}()
+		})
 	}
 
 	for {
