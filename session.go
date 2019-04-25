@@ -363,7 +363,7 @@ func (s *session) send(frame []byte) (open bool) {
 	snd := &sender{
 		session:        s,
 		coalescedBytes: 0,
-		coalesced:      1,
+		coalesced:      0,
 		startOfData:    lenSize, // Reserve space for header in sessionFrame
 	}
 	open = snd.send(frame)
