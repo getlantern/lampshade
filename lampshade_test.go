@@ -1,18 +1,21 @@
 package lampshade
 
 import (
+	"crypto/rsa"
 	"crypto/tls"
 	"io"
 	"math/rand"
 	"net"
 	"os"
 	"runtime/pprof"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/getlantern/bytecounting"
 	"github.com/getlantern/fdcount"
 	"github.com/getlantern/keyman"
 	"github.com/getlantern/tlsdefaults"
@@ -421,27 +424,50 @@ func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, BoundDialer, *
 }
 
 func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification int, idleInterval time.Duration) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
-	if amplification < 1 {
-		amplification = 1
-	}
+	pool := NewBufferPool(100)
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	l, wg, err := echoServer(pool, true, pk.RSA(), amplification)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	doDial := func() (net.Conn, error) {
+		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+	}
 
+	dialer := NewDialer(&DialerOpts{
+		WindowSize:        windowSize,
+		MaxPadding:        maxPadding,
+		MaxStreamsPerConn: maxStreamsPerConn,
+		IdleInterval:      idleInterval,
+		PingInterval:      testPingInterval,
+		Pool:              pool,
+		Cipher:            AES128GCM,
+		ServerPublicKey:   &pk.RSA().PublicKey})
+
+	return l, dialer.BoundTo(doDial), wg, nil
+}
+
+func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey, amplification int) (net.Listener, *sync.WaitGroup, error) {
+	if amplification < 1 {
+		amplification = 1
+	}
 	wrapped, err := net.Listen("tcp", ":0")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	pkFile, certFile := "pkfile.pem", "certfile.pem"
-	wrapped, err = tlsdefaults.NewListener(wrapped, pkFile, certFile)
-	if err != nil {
-		return nil, nil, nil, err
+	if overTLS {
+		pkFile, certFile := "pkfile.pem", "certfile.pem"
+		wrapped, err = tlsdefaults.NewListener(wrapped, pkFile, certFile)
+		if err != nil {
+			return nil, nil, err
+		}
 	}
 
-	pool := NewBufferPool(100)
-	l := WrapListener(wrapped, pool, pk.RSA(), false)
+	l := WrapListener(wrapped, pool, serverPrivateKey, false)
 
 	var wg sync.WaitGroup
 	go func() {
@@ -496,21 +522,7 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification
 		}
 	}()
 
-	doDial := func() (net.Conn, error) {
-		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
-	}
-
-	dialer := NewDialer(&DialerOpts{
-		WindowSize:        windowSize,
-		MaxPadding:        maxPadding,
-		MaxStreamsPerConn: maxStreamsPerConn,
-		IdleInterval:      idleInterval,
-		PingInterval:      testPingInterval,
-		Pool:              pool,
-		Cipher:            AES128GCM,
-		ServerPublicKey:   &pk.RSA().PublicKey})
-
-	return l, dialer.BoundTo(doDial), &wg, nil
+	return l, &wg, nil
 }
 
 func TestCloseStreamAfterSessionClosed(t *testing.T) {
@@ -527,6 +539,96 @@ func TestCloseStreamAfterSessionClosed(t *testing.T) {
 	conn.(Stream).Session().Close()
 	// Simply make sure it doesn't block
 	conn.Close()
+}
+
+func TestPadding(t *testing.T) {
+	pool := NewBufferPool(100)
+	pk, err := keyman.GeneratePK(2048)
+	if !assert.NoError(t, err) {
+		return
+	}
+	l, wg, err := echoServer(pool, false, pk.RSA(), 1)
+	if !assert.NoError(t, err) {
+		return
+	}
+	var mu sync.RWMutex
+	rounds := 10
+	writtenBytes := make([][]int, rounds)
+	var round int64
+	for atomic.AddInt64(&round, 1) <= int64(rounds) {
+		i := atomic.LoadInt64(&round) - 1
+		doDial := func() (net.Conn, error) {
+			conn, err := net.Dial("tcp", l.Addr().String())
+			if err != nil {
+				return conn, err
+			}
+			return &bytecounting.Conn{
+				Orig: conn,
+				OnWrite: func(bytes int64) {
+					mu.Lock()
+					writtenBytes[i] = append(writtenBytes[i], int(bytes))
+					mu.Unlock()
+				},
+			}, nil
+		}
+
+		dialer := NewDialer(&DialerOpts{
+			WindowSize:        windowSize,
+			MaxPadding:        maxPadding,
+			MaxStreamsPerConn: 10,
+			IdleInterval:      0,
+			PingInterval:      testPingInterval,
+			Pool:              pool,
+			Cipher:            AES128GCM,
+			ServerPublicKey:   &pk.RSA().PublicKey})
+
+		conn, err := dialer.Dial(doDial)
+		if !assert.NoError(t, err) {
+			return
+		}
+		defer conn.Close()
+		n, err := conn.Write([]byte(testdata))
+		if !assert.NoError(t, err) {
+			return
+		}
+		if !assert.Equal(t, len(testdata), n) {
+			return
+		}
+
+		b := make([]byte, len(testdata))
+		n, err = io.ReadFull(conn, b)
+		if !assert.NoError(t, err) {
+			return
+		}
+		if !assert.Equal(t, len(testdata), n) {
+			return
+		}
+
+		assert.Equal(t, testdata, string(b))
+		_, err = conn.Write([]byte("stop"))
+		if !assert.NoError(t, err) {
+			return
+		}
+
+		wg.Wait()
+		conn.Close()
+	}
+	writtenPacketsDistribution := make([][]int, 10)
+	mu.RLock()
+	for i, wb := range writtenBytes {
+		for j := 0; j < len(wb); j++ {
+			writtenPacketsDistribution[j] = append(writtenPacketsDistribution[j], wb[j])
+		}
+		t.Logf("Packet sequence written to connection #%v: %v", i, wb)
+	}
+	mu.RUnlock()
+	for _, writes := range writtenPacketsDistribution {
+		if len(writes) < 3 {
+			break
+		}
+		sort.Ints(writes)
+		assert.NotEqual(t, writes[0], writes[2], "Packet sizes should vary for each connection with the same payload")
+	}
 }
 
 func TestConcurrency(t *testing.T) {
