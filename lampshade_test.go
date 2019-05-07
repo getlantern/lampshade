@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"crypto/rsa"
 	"crypto/tls"
 	"io"
 	"math/rand"
@@ -421,27 +422,48 @@ func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, BoundDialer, *
 }
 
 func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification int, idleInterval time.Duration) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
-	if amplification < 1 {
-		amplification = 1
-	}
+	pool := NewBufferPool(100)
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-
-	wrapped, err := net.Listen("tcp", ":0")
+	l, wg, err := echoServer(pool, pk.RSA(), amplification)
 	if err != nil {
 		return nil, nil, nil, err
+	}
+	doDial := func() (net.Conn, error) {
+		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
+	}
+
+	dialer := NewDialer(&DialerOpts{
+		WindowSize:        windowSize,
+		MaxPadding:        maxPadding,
+		MaxStreamsPerConn: maxStreamsPerConn,
+		IdleInterval:      idleInterval,
+		PingInterval:      testPingInterval,
+		Pool:              pool,
+		Cipher:            AES128GCM,
+		ServerPublicKey:   &pk.RSA().PublicKey})
+
+	return l, dialer.BoundTo(doDial), wg, nil
+}
+
+func echoServer(pool BufferPool, serverPrivateKey *rsa.PrivateKey, amplification int) (net.Listener, *sync.WaitGroup, error) {
+	if amplification < 1 {
+		amplification = 1
+	}
+	wrapped, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return nil, nil, err
 	}
 
 	pkFile, certFile := "pkfile.pem", "certfile.pem"
 	wrapped, err = tlsdefaults.NewListener(wrapped, pkFile, certFile)
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 
-	pool := NewBufferPool(100)
-	l := WrapListener(wrapped, pool, pk.RSA(), false)
+	l := WrapListener(wrapped, pool, serverPrivateKey, false)
 
 	var wg sync.WaitGroup
 	go func() {
@@ -496,21 +518,7 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification
 		}
 	}()
 
-	doDial := func() (net.Conn, error) {
-		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
-	}
-
-	dialer := NewDialer(&DialerOpts{
-		WindowSize:        windowSize,
-		MaxPadding:        maxPadding,
-		MaxStreamsPerConn: maxStreamsPerConn,
-		IdleInterval:      idleInterval,
-		PingInterval:      testPingInterval,
-		Pool:              pool,
-		Cipher:            AES128GCM,
-		ServerPublicKey:   &pk.RSA().PublicKey})
-
-	return l, dialer.BoundTo(doDial), &wg, nil
+	return l, &wg, nil
 }
 
 func TestCloseStreamAfterSessionClosed(t *testing.T) {
