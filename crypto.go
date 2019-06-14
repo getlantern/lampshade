@@ -8,7 +8,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"github.com/Yawning/chacha20"
+	"github.com/bcmertz/chacha20"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
