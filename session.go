@@ -529,13 +529,13 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	if readErr == nil {
 		readErr = ErrBrokenPipe
 	} else if readErr != io.EOF {
-		log.Errorf("Error on reading from %v on %#v: %v", s.RemoteAddr(), s, readErr)
+		log.Errorf("Error on reading from %v on %#v: %v", s.RemoteAddr(), s.String(), readErr)
 	}
 
 	if writeErr == nil {
 		writeErr = ErrBrokenPipe
 	} else {
-		log.Errorf("Error on writing to %v on %#v: %v", s.RemoteAddr(), s, writeErr)
+		log.Errorf("Error on writing to %v on %#v: %v", s.RemoteAddr(), s.String(), writeErr)
 	}
 
 	for _, c := range streams {
@@ -654,7 +654,7 @@ func (w sessionWriter) Write(b []byte) (int, error) {
 
 func (s *session) String() string {
 	s.mx.Lock()
-	str := fmt.Sprintf("Lampshade session: {%#v, closed: %#v, streams: %#v}", s, s.closed, s.streams)
+	str := fmt.Sprintf("Lampshade session: {%#v, closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v}", s, s.closed, s.streams, s.lastPing, s.lastDialed, s.defunct)
 	s.mx.Unlock()
 	return str
 }
