@@ -58,6 +58,7 @@ func (s nullSession) AllowNewStream(maxStreamPerConn uint16) bool {
 }
 func (s nullSession) MarkDefunct()          {}
 func (s nullSession) CreateStream() *stream { panic("should never be called") }
+func (s nullSession) String() string        { return "nullSession" }
 
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
