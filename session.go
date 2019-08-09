@@ -49,6 +49,7 @@ type sessionIntf interface {
 	AllowNewStream(maxStreamPerConn uint16) bool
 	MarkDefunct()
 	CreateStream() *stream
+	String() string
 }
 type nullSession struct{}
 
@@ -584,6 +585,7 @@ func (s *session) AllowNewStream(maxStreamPerConn uint16) bool {
 		return false
 	}
 	if s.isClosed() {
+		log.Debug("Session is closed -- not allowing new stream")
 		return false
 	}
 	return true
@@ -654,7 +656,7 @@ func (w sessionWriter) Write(b []byte) (int, error) {
 
 func (s *session) String() string {
 	s.mx.Lock()
-	str := fmt.Sprintf("lampshade session: {closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v, paddingEnabled:%v}", len(s.closed), len(s.streams), s.lastPing, s.lastDialed, s.defunct, s.paddingEnabled)
+	str := fmt.Sprintf("lampshade session: {closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v, paddingEnabled:%v, nextID: %v}", len(s.closed), len(s.streams), s.lastPing, s.lastDialed, s.defunct, s.paddingEnabled, s.nextID)
 	s.mx.Unlock()
 	return str
 }

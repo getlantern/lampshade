@@ -175,7 +175,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 			d.numLive--
 			d.muNumLivePending.Unlock()
 			s.MarkDefunct()
-			log.Debugf("Calling newSession after not allowing new stream")
+			log.Debugf("Calling newSession after not allowing new stream on session: %v", s.String())
 			newSession(minLiveConns)
 		case <-time.After(d.redialSessionInterval):
 			log.Debugf("Calling newSesson after redialSessionInterval")
