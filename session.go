@@ -654,7 +654,7 @@ func (w sessionWriter) Write(b []byte) (int, error) {
 
 func (s *session) String() string {
 	s.mx.Lock()
-	str := fmt.Sprintf("Lampshade session: {%#v, closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v}", s, s.closed, s.streams, s.lastPing, s.lastDialed, s.defunct)
+	str := fmt.Sprintf("lampshade session: {%#v, closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v}", s, s.closed, s.streams, s.lastPing, s.lastDialed, s.defunct)
 	s.mx.Unlock()
 	return str
 }
