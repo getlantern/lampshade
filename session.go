@@ -20,10 +20,8 @@ import (
 )
 
 var (
-	ReadTimeout = 15 * time.Second
-)
-
-var (
+	// ReadTimeout is the default timeout for reading data from a stream.
+	ReadTimeout     = 15 * time.Second
 	openSessions    int64
 	closingSessions int64
 	closedSessions  int64
@@ -653,6 +651,13 @@ func (w sessionWriter) Write(b []byte) (int, error) {
 	case w.s.out <- b:
 		return len(b), nil
 	}
+}
+
+func (s *session) String() string {
+	s.mx.Lock()
+	str := fmt.Sprintf("Lampshade session: {%#v, closed: %#v, streams: %#v}", s, s.closed, s.streams)
+	s.mx.Unlock()
+	return str
 }
 
 // TODO: do we need a way to close a session/physical connection intentionally?

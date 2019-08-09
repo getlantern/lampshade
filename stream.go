@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -147,4 +148,10 @@ func (c *stream) Session() Session {
 
 func (c *stream) Wrapped() net.Conn {
 	return c.Session()
+}
+
+func (c *stream) String() string {
+	c.mx.Lock()
+	return fmt.Sprintf("Lampshade stream: {stream: %#v, session: %v}", c, c.session.String())
+	c.mx.Unlock()
 }
