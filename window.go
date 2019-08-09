@@ -61,13 +61,6 @@ func (w *window) sub(delta int) chan bool {
 	return w.positiveAgain
 }
 
-func (w *window) timedOut(delta int) error {
-	// undo the subtraction
-	w.add(delta)
-	// record the timeout
-	return ErrTimeout
-}
-
 func (w *window) close() {
 	w.mx.Lock()
 	shouldClose := !w.closed

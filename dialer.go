@@ -71,7 +71,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.MaxLiveConns <= 0 {
 		opts.MaxLiveConns = 1
 	}
-	if opts.MaxStreamsPerConn <= 0 || opts.MaxStreamsPerConn > maxID {
+	if opts.MaxStreamsPerConn == 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
 
@@ -95,12 +95,12 @@ func NewDialer(opts *DialerOpts) Dialer {
 		idleInterval:          opts.IdleInterval,
 		pingInterval:          opts.PingInterval,
 		redialSessionInterval: opts.RedialSessionInterval,
-		pool:            opts.Pool,
-		cipherCode:      opts.Cipher,
-		serverPublicKey: opts.ServerPublicKey,
-		liveSessions:    liveSessions,
-		numLive:         1, // the nullSession
-		emaRTT:          ema.NewDuration(0, 0.5),
+		pool:                  opts.Pool,
+		cipherCode:            opts.Cipher,
+		serverPublicKey:       opts.ServerPublicKey,
+		liveSessions:          liveSessions,
+		numLive:               1, // the nullSession
+		emaRTT:                ema.NewDuration(0, 0.5),
 	}
 }
 
@@ -168,7 +168,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 	for {
 		select {
 		case s := <-d.liveSessions:
-			if s.AllowNewStream(d.maxStreamsPerConn, d.idleInterval) {
+			if s.AllowNewStream(d.maxStreamsPerConn) {
 				return s, nil
 			}
 			d.muNumLivePending.Lock()
