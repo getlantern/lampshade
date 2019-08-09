@@ -438,10 +438,9 @@ func (snd *sender) send(frame []byte) (open bool) {
 	open = snd.coalesceAdditionalFrames()
 
 	if snd.pingInterval > 0 {
-		now := time.Now()
-		if now.Sub(snd.lastPing) > snd.pingInterval {
+		if time.Since(snd.lastPing) > snd.pingInterval {
+			snd.lastPing = time.Now()
 			snd.bufferFrame(ping())
-			snd.lastPing = now
 		}
 	}
 
@@ -530,13 +529,13 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	if readErr == nil {
 		readErr = ErrBrokenPipe
 	} else if readErr != io.EOF {
-		log.Errorf("Error on reading from %v: %v", s.RemoteAddr(), readErr)
+		log.Errorf("Error on reading from %v on %#v: %v", s.RemoteAddr(), s, readErr)
 	}
 
 	if writeErr == nil {
 		writeErr = ErrBrokenPipe
 	} else {
-		log.Errorf("Error on writing to %v: %v", s.RemoteAddr(), writeErr)
+		log.Errorf("Error on writing to %v on %#v: %v", s.RemoteAddr(), s, writeErr)
 	}
 
 	for _, c := range streams {
