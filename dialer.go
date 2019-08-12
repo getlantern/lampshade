@@ -162,6 +162,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 			}
 			d.numLive++
 			d.muNumLivePending.Unlock()
+			log.Debug("Adding new real session...")
 			d.liveSessions <- s
 		}()
 	}
