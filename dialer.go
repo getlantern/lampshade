@@ -216,6 +216,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 		return nil, err
 	}
 
+	log.Debug("Successfully dialed...")
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create crypto spec for %v: %v", d.cipherCode, err)
