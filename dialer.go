@@ -170,6 +170,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 		select {
 		case s := <-d.liveSessions:
 			if s.AllowNewStream(d.maxStreamsPerConn) {
+				log.Debug("Stream allowed...")
 				return s, nil
 			}
 			d.muNumLivePending.Lock()
