@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"fmt"
 	"io"
 	"math"
 	"sync"
@@ -105,11 +106,12 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				buf.ackIfNecessary()
 				return
 			}
-			timer := time.NewTimer(deadline.Sub(now))
+			remaining := deadline.Sub(now)
+			timer := time.NewTimer(remaining)
 			select {
 			case <-timer.C:
 				// Nothing read within deadline
-				err = ErrTimeout
+				err = newErrTimeout(fmt.Sprintf(" after %v", remaining.Seconds()))
 				timer.Stop()
 				buf.ackIfNecessary()
 				return

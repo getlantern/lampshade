@@ -427,3 +427,7 @@ func echo() []byte {
 	echo[tsSize] = frameTypeEcho
 	return echo
 }
+
+func newErrTimeout(msg string) error {
+	return &netError{err: ErrTimeout.err + ": " + msg, timeout: ErrTimeout.timeout, temporary: ErrTimeout.temporary}
+}
