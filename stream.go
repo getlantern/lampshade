@@ -153,8 +153,8 @@ func (c *stream) Wrapped() net.Conn {
 }
 
 func (c *stream) String() string {
-	c.mx.Lock()
+	c.mx.RLock()
 	str := fmt.Sprintf("Lampshade stream: {stream: %#v, session: %v}", c, c.session.String())
-	c.mx.Unlock()
+	c.mx.RUnlock()
 	return str
 }
