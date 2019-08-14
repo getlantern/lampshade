@@ -568,7 +568,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	c = newStream(s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id))
+	c = newStream(s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id)
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {
