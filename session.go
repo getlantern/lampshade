@@ -315,7 +315,7 @@ func (s *session) recvLoop() {
 			c, open := s.getOrCreateStream(id)
 			if !open {
 				if !alreadyLoggedReceiveForClosedStream[id] {
-					log.Debugf("Received data for closed stream %d", id)
+					log.Debugf("Received data for closed stream %d on %v", id, s.LocalAddr().String())
 					alreadyLoggedReceiveForClosedStream[id] = true
 				}
 				// Stream was already closed, ignore
@@ -657,7 +657,7 @@ func (w sessionWriter) Write(b []byte) (int, error) {
 
 func (s *session) String() string {
 	s.mx.Lock()
-	str := fmt.Sprintf("lampshade session: {closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v, paddingEnabled:%v, nextID: %v}", len(s.closed), len(s.streams), s.lastPing, s.lastDialed, s.defunct, s.paddingEnabled, s.nextID)
+	str := fmt.Sprintf("lampshade session: {localAddr: %v, closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v, paddingEnabled:%v, nextID: %v}", s.LocalAddr().String(), len(s.closed), len(s.streams), s.lastPing, s.lastDialed, s.defunct, s.paddingEnabled, s.nextID)
 	s.mx.Unlock()
 	return str
 }
