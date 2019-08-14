@@ -259,16 +259,16 @@ var (
 	log = golog.LoggerFor("lampshade")
 
 	// ErrTimeout indicates that an i/o operation timed out.
-	ErrTimeout = &netError{"i/o timeout", true, true}
+	ErrTimeout = &netError{"lampshade i/o timeout", true, true}
 	// ErrConnectionClosed indicates that an i/o operation was attempted on a
 	// closed stream.
-	ErrConnectionClosed = &netError{"connection closed", false, false}
+	ErrConnectionClosed = &netError{"lampshade connection closed", false, false}
 	// ErrBrokenPipe indicates that an i/o operation was attempted on session
 	// whose underlying connection isn't working anymore.
-	ErrBrokenPipe = &netError{"broken pipe", false, false}
+	ErrBrokenPipe = &netError{"lampshade broken pipe", false, false}
 	// ErrListenerClosed indicates that an Accept was attempted on a closed
 	// listener.
-	ErrListenerClosed = &netError{"listener closed", false, false}
+	ErrListenerClosed = &netError{"lampshade listener closed", false, false}
 
 	binaryEncoding = binary.BigEndian
 
