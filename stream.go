@@ -23,9 +23,10 @@ type stream struct {
 	finalReadErr  error
 	finalWriteErr error
 	mx            sync.RWMutex
+	id            uint16
 }
 
-func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte) *stream {
+func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16) *stream {
 	atomic.AddInt64(&openStreams, 1)
 	return &stream{
 		Conn:    s,
@@ -33,6 +34,7 @@ func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHe
 		pool:    bp,
 		sb:      newSendBuffer(defaultHeader, w, windowSize),
 		rb:      newReceiveBuffer(defaultHeader, w, bp, windowSize),
+		id:      id,
 	}
 }
 
