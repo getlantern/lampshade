@@ -94,6 +94,7 @@ type session struct {
 	nextID           uint32
 	mx               sync.RWMutex
 	ctx              context.Context
+	span             opentracing.Span
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -101,7 +102,7 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(span opentracing.Span, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -123,7 +124,7 @@ func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
 		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
-		ctx:              ctx,
+		span:             span,
 	}
 
 	var err error
@@ -619,12 +620,11 @@ func (s *session) closeStream(id uint16) {
 var errorAlreadyClosed = errors.New("session already closed")
 
 func (s *session) Close() error {
+	log.Debug("Closing lampshade session")
 	err := errorAlreadyClosed
 	s.closeOnce.Do(func() {
-		span := opentracing.SpanFromContext(s.ctx)
-		if span != nil {
-			span.Finish()
-		}
+		log.Debug("Finishing span...")
+		s.span.Finish()
 
 		close(s.closeCh)
 		atomic.AddInt64(&closingSessions, 1)

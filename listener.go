@@ -1,13 +1,13 @@
 package lampshade
 
 import (
-	"context"
 	"crypto/rsa"
 	"io"
 	"net"
 	"time"
 
 	"github.com/getlantern/ops"
+	"github.com/opentracing/opentracing-go"
 )
 
 type listener struct {
@@ -137,6 +137,7 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		l.onError(conn, fullErr)
 		return fullErr
 	}
-	startSession(context.Background(), conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
+	span := opentracing.StartSpan("lampshade-listener-session")
+	startSession(span, conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
 	return nil
 }
