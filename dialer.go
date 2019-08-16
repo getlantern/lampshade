@@ -215,8 +215,8 @@ func (d *dialer) BoundTo(dial DialFN) BoundDialer {
 func (d *dialer) startSession(dial DialFN) (*session, error) {
 	span := opentracing.StartSpan("lampshade-session")
 	ctx := context.Background()
-	ctx = opentracing.ContextWithSpan(ctx, span)
-	dialSpan, ctx := opentracing.StartSpanFromContext(ctx, "lampshade-dial-init")
+	sessionContext := opentracing.ContextWithSpan(ctx, span)
+	dialSpan, ctx := opentracing.StartSpanFromContext(sessionContext, "lampshade-dial-init")
 	defer dialSpan.Finish()
 	conn, err := dial()
 	if err != nil {
@@ -235,7 +235,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(span, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
+	return startSession(sessionContext, span, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
 }
 
 type boundDialer struct {

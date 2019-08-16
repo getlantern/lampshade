@@ -102,7 +102,7 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(span opentracing.Span, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(ctx context.Context, span opentracing.Span, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -124,6 +124,7 @@ func startSession(span opentracing.Span, conn net.Conn, windowSize int, maxPaddi
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
 		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
+		ctx:              ctx,
 		span:             span,
 	}
 
@@ -556,12 +557,12 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 
 func (s *session) CreateStream() *stream {
 	nextID := atomic.AddUint32(&s.nextID, 1)
-	stream, _ := s.getOrCreateStream(uint16(nextID - 1))
+	stream, _ := s.getOrCreateStream(s.ctx, uint16(nextID-1))
 	s.lastDialed = time.Now()
 	return stream
 }
 
-func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
+func (s *session) getOrCreateStream(ctx context.Context, id uint16) (*stream, bool) {
 	s.mx.Lock()
 	c := s.streams[id]
 	if c != nil {
@@ -574,7 +575,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	c = newStream(s.ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id)
+	c = newStream(ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id)
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {
