@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/opentracing/opentracing-go"
+
+	otlog "github.com/opentracing/opentracing-go/log"
 )
 
 // a stream is a multiplexed net.Conn operating on top of a physical net.Conn
@@ -52,7 +54,9 @@ func (c *stream) Read(b []byte) (int, error) {
 	if finalReadErr != nil {
 		return 0, finalReadErr
 	}
-	return c.rb.read(b, readDeadline)
+	num, err := c.rb.read(b, readDeadline)
+	c.span.LogFields(otlog.Int("read", num))
+	return num, err
 }
 
 func (c *stream) Write(b []byte) (int, error) {
@@ -73,7 +77,9 @@ func (c *stream) Write(b []byte) (int, error) {
 	_b := b
 	b = c.pool.getForFrame()[:len(b)]
 	copy(b, _b)
-	return c.sb.send(b, writeDeadline)
+	num, err := c.sb.send(b, writeDeadline)
+	c.span.LogFields(otlog.Int("write", num))
+	return num, err
 }
 
 // writeChunks breaks the buffer down into units smaller than MaxDataLen in size
