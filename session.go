@@ -256,7 +256,7 @@ func (s *session) recvLoop() {
 				// Padding is always at the end of a session frame, so stop processing
 				break frameLoop
 			case frameTypeACK:
-				c, open := s.getOrCreateStream(id)
+				c, open := s.getOrCreateStream(s.ctx, id)
 				if !open {
 					// Stream was already closed, ignore
 					continue
