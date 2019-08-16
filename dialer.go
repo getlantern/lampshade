@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/getlantern/ema"
+	"github.com/opentracing/opentracing-go"
 )
 
 const (
@@ -212,6 +213,11 @@ func (d *dialer) BoundTo(dial DialFN) BoundDialer {
 }
 
 func (d *dialer) startSession(dial DialFN) (*session, error) {
+	span := opentracing.StartSpan("lampshade-session")
+	ctx := context.Background()
+	ctx = opentracing.ContextWithSpan(ctx, span)
+	dialSpan, ctx := opentracing.StartSpanFromContext(ctx, "lampshade-dial-init")
+	defer dialSpan.Finish()
 	conn, err := dial()
 	if err != nil {
 		return nil, err
@@ -229,7 +235,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
+	return startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
 }
 
 type boundDialer struct {

@@ -1,12 +1,15 @@
 package lampshade
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/opentracing/opentracing-go"
 )
 
 // a stream is a multiplexed net.Conn operating on top of a physical net.Conn
@@ -24,10 +27,12 @@ type stream struct {
 	finalWriteErr error
 	mx            sync.RWMutex
 	id            uint16
+	span          opentracing.Span
 }
 
-func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16) *stream {
+func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16) *stream {
 	atomic.AddInt64(&openStreams, 1)
+	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("stream-%v", id))
 	return &stream{
 		Conn:    s,
 		session: s,
@@ -35,6 +40,7 @@ func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHe
 		sb:      newSendBuffer(defaultHeader, w, windowSize),
 		rb:      newReceiveBuffer(defaultHeader, w, bp, windowSize),
 		id:      id,
+		span:    span,
 	}
 }
 
@@ -109,6 +115,7 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 		atomic.AddInt64(&closingStreams, -1)
 		atomic.AddInt64(&openStreams, -1)
 		atomic.AddInt64(&closedStreams, 1)
+		c.span.Finish()
 	}
 	c.mx.Unlock()
 	return nil
