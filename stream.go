@@ -55,7 +55,7 @@ func (c *stream) Read(b []byte) (int, error) {
 		return 0, finalReadErr
 	}
 	num, err := c.rb.read(b, readDeadline)
-	c.span.LogFields(otlog.Int("read", num))
+	c.span.LogFields(otlog.Int("r", num))
 	return num, err
 }
 
@@ -78,7 +78,7 @@ func (c *stream) Write(b []byte) (int, error) {
 	b = c.pool.getForFrame()[:len(b)]
 	copy(b, _b)
 	num, err := c.sb.send(b, writeDeadline)
-	c.span.LogFields(otlog.Int("write", num))
+	c.span.LogFields(otlog.Int("w", num))
 	return num, err
 }
 
