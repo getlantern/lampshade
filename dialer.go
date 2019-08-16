@@ -11,7 +11,6 @@ import (
 
 	"github.com/getlantern/ema"
 	"github.com/opentracing/opentracing-go"
-	"github.com/siddontang/go/log"
 )
 
 const (
