@@ -127,6 +127,7 @@ func startSession(ctx context.Context, span opentracing.Span, conn net.Conn, win
 		ctx:              ctx,
 		span:             span,
 	}
+	defer span.Finish()
 
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -624,9 +625,6 @@ func (s *session) Close() error {
 	log.Debug("Closing lampshade session")
 	err := errorAlreadyClosed
 	s.closeOnce.Do(func() {
-		log.Debug("Finishing span...")
-		s.span.Finish()
-
 		close(s.closeCh)
 		atomic.AddInt64(&closingSessions, 1)
 		if s.beforeClose != nil {
