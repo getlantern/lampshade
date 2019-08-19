@@ -327,7 +327,7 @@ func (s *session) recvLoop() {
 			c, open := s.getOrCreateStream(id)
 			if !open {
 				if !alreadyLoggedReceiveForClosedStream[id] {
-					log.Debugf("Received data for closed stream %v-%v on %v->%v -- closed: %v", id, c.upstreamHost, s.LocalAddr().String(), s.proxyName, s.isClosed())
+					log.Debugf("Received data for closed stream %v on %v->%v -- closed: %v", id, s.LocalAddr().String(), s.proxyName, s.isClosed())
 					alreadyLoggedReceiveForClosedStream[id] = true
 				}
 				// Stream was already closed, ignore
