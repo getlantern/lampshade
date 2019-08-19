@@ -226,7 +226,7 @@ func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*ses
 	span.SetTag("proto", "lampshade")
 	span.SetTag("host", conn.RemoteAddr().String())
 	span.SetTag("localaddr", conn.LocalAddr().String())
-	span.SetOperationName(proxyName)
+	span.SetOperationName(proxyName + conn.LocalAddr().String())
 	log.Debug("Successfully dialed...")
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {

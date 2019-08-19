@@ -30,19 +30,21 @@ type stream struct {
 	mx            sync.RWMutex
 	id            uint16
 	span          opentracing.Span
+	upstreamHost  string
 }
 
 func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, upstreamHost string) *stream {
 	atomic.AddInt64(&openStreams, 1)
 	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("stream-%v-%v", id, upstreamHost))
 	return &stream{
-		Conn:    s,
-		session: s,
-		pool:    bp,
-		sb:      newSendBuffer(defaultHeader, w, windowSize),
-		rb:      newReceiveBuffer(defaultHeader, w, bp, windowSize),
-		id:      id,
-		span:    span,
+		Conn:         s,
+		session:      s,
+		pool:         bp,
+		sb:           newSendBuffer(defaultHeader, w, windowSize),
+		rb:           newReceiveBuffer(defaultHeader, w, bp, windowSize),
+		id:           id,
+		span:         span,
+		upstreamHost: upstreamHost,
 	}
 }
 
