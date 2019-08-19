@@ -95,6 +95,8 @@ type session struct {
 	mx               sync.RWMutex
 	ctx              context.Context
 	span             opentracing.Span
+	proxyName        string
+	upstreamHost     string
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -102,7 +104,7 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(ctx context.Context, span opentracing.Span, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(ctx context.Context, span opentracing.Span, proxyName, upstreamHost string, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -126,6 +128,8 @@ func startSession(ctx context.Context, span opentracing.Span, conn net.Conn, win
 		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
 		ctx:              ctx,
 		span:             span,
+		proxyName:        proxyName,
+		upstreamHost:     upstreamHost,
 	}
 	defer span.Finish()
 
@@ -576,7 +580,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	c = newStream(s.ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id)
+	c = newStream(s.ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id, s.upstreamHost)
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {
@@ -665,10 +669,7 @@ func (w sessionWriter) Write(b []byte) (int, error) {
 }
 
 func (s *session) String() string {
-	s.mx.Lock()
-	str := fmt.Sprintf("lampshade session: {localAddr: %v, closed: %#v, streams: %#v, lastPing: %v, lastDialed: %v, defunct: %v, paddingEnabled:%v, nextID: %v}", s.LocalAddr().String(), len(s.closed), len(s.streams), s.lastPing, s.lastDialed, s.defunct, s.paddingEnabled, s.nextID)
-	s.mx.Unlock()
-	return str
+	return fmt.Sprintf("lampshade session: {localAddr: %v}", s.LocalAddr().String())
 }
 
 // TODO: do we need a way to close a session/physical connection intentionally?

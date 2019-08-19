@@ -123,12 +123,12 @@ type dialer struct {
 	emaRTT                *ema.EMA
 }
 
-func (d *dialer) Dial(dial DialFN) (net.Conn, error) {
-	return d.DialContext(context.Background(), dial)
+func (d *dialer) Dial(proxyName, upstreamHost string, dial DialFN) (net.Conn, error) {
+	return d.DialContext(context.Background(), proxyName, upstreamHost, dial)
 }
 
-func (d *dialer) DialContext(ctx context.Context, dial DialFN) (net.Conn, error) {
-	s, err := d.getOrCreateSession(ctx, dial)
+func (d *dialer) DialContext(ctx context.Context, proxyName, upstreamHost string, dial DialFN) (net.Conn, error) {
+	s, err := d.getOrCreateSession(ctx, proxyName, upstreamHost, dial)
 	if err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIntf, error) {
+func (d *dialer) getOrCreateSession(ctx context.Context, proxyName, upstreamHost string, dial DialFN) (sessionIntf, error) {
 	newSession := func(cap int) {
 		d.muNumLivePending.Lock()
 		if d.numLive+d.numPending >= cap {
@@ -154,7 +154,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIn
 		d.numPending++
 		d.muNumLivePending.Unlock()
 		go func() {
-			s, err := d.startSession(dial)
+			s, err := d.startSession(proxyName, upstreamHost, dial)
 			d.muNumLivePending.Lock()
 			d.numPending--
 			if err != nil {
@@ -208,11 +208,11 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) BoundTo(dial DialFN) BoundDialer {
+func (d *dialer) BoundTo(proxyName, upstreamHost string, dial DialFN) BoundDialer {
 	return &boundDialer{d, dial}
 }
 
-func (d *dialer) startSession(dial DialFN) (*session, error) {
+func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*session, error) {
 	span := opentracing.StartSpan("lampshade-session")
 	ctx := context.Background()
 	sessionContext := opentracing.ContextWithSpan(ctx, span)
@@ -226,6 +226,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 	span.SetTag("proto", "lampshade")
 	span.SetTag("host", conn.RemoteAddr().String())
 	span.SetTag("localaddr", conn.LocalAddr().String())
+	span.SetOperationName(conn.RemoteAddr().String())
 	log.Debug("Successfully dialed...")
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
@@ -238,7 +239,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(sessionContext, span, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
+	return startSession(sessionContext, span, proxyName, upstreamHost, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
 }
 
 type boundDialer struct {
@@ -247,10 +248,10 @@ type boundDialer struct {
 	dial DialFN
 }
 
-func (bd *boundDialer) Dial() (net.Conn, error) {
-	return bd.Dialer.Dial(bd.dial)
+func (bd *boundDialer) Dial(proxyName, upstreamHost string) (net.Conn, error) {
+	return bd.Dialer.Dial(proxyName, upstreamHost, bd.dial)
 }
 
-func (bd *boundDialer) DialContext(ctx context.Context) (net.Conn, error) {
-	return bd.Dialer.DialContext(ctx, bd.dial)
+func (bd *boundDialer) DialContext(ctx context.Context, proxyName, upstreamHost string) (net.Conn, error) {
+	return bd.Dialer.DialContext(ctx, proxyName, upstreamHost, bd.dial)
 }

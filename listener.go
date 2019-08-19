@@ -139,6 +139,6 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		return fullErr
 	}
 	span := opentracing.StartSpan("lampshade-listener-session")
-	startSession(context.Background(), span, conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
+	startSession(context.Background(), span, "", "", conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
 	return nil
 }

@@ -32,9 +32,9 @@ type stream struct {
 	span          opentracing.Span
 }
 
-func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16) *stream {
+func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, upstreamHost string) *stream {
 	atomic.AddInt64(&openStreams, 1)
-	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("stream-%v", id))
+	span, ctx := opentracing.StartSpanFromContext(ctx, fmt.Sprintf("stream-%v-%v", id, upstreamHost))
 	return &stream{
 		Conn:    s,
 		session: s,
