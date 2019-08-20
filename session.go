@@ -255,7 +255,7 @@ func (s *session) recvLoop() {
 				// Padding is always at the end of a session frame, so stop processing
 				break frameLoop
 			case frameTypeACK:
-				c, open := s.getOrCreateStream(id, s.listenerStreamName(id))
+				c, open := s.getOrCreateStream(id, "")
 				if !open {
 					// Stream was already closed, ignore
 					continue
@@ -318,7 +318,7 @@ func (s *session) recvLoop() {
 				return
 			}
 
-			c, open := s.getOrCreateStream(id, s.listenerStreamName(id))
+			c, open := s.getOrCreateStream(id, "")
 			if !open {
 				c.span.LogFields(otlog.Int("closed-data", 1))
 				if !alreadyLoggedReceiveForClosedStream[id] {
@@ -339,14 +339,6 @@ func (s *session) recvLoop() {
 			}
 		}
 	}
-}
-
-func (s *session) listenerStreamName(id uint16) string {
-	return s.streamName(id, "")
-}
-
-func (s *session) streamName(id uint16, hostID string) string {
-	return fmt.Sprintf("stream-%v-%v", id, hostID)
 }
 
 func (s *session) sendLoop() {

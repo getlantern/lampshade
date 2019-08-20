@@ -35,7 +35,17 @@ type stream struct {
 
 func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, upstreamHost string) *stream {
 	atomic.AddInt64(&openStreams, 1)
-	span, ctx := opentracing.StartSpanFromContext(ctx, s.streamName(id, upstreamHost))
+
+	// If there is an existing parent span, create a child span. Otherwise do not trace.
+	opts := make([]opentracing.StartSpanOption, 0)
+	var span opentracing.Span
+	if parentSpan := opentracing.SpanFromContext(ctx); parentSpan != nil {
+		opts = append(opts, opentracing.ChildOf(parentSpan.Context()))
+		span = opentracing.GlobalTracer().StartSpan(fmt.Sprintf("stream-%v-%v", id, upstreamHost), opts...)
+	} else {
+		noop := opentracing.NoopTracer{}
+		span = noop.StartSpan("noop")
+	}
 	return &stream{
 		Conn:         s,
 		session:      s,
