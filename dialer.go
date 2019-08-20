@@ -231,7 +231,7 @@ func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*ses
 	span.SetTag("host", conn.RemoteAddr().String())
 	span.SetTag("clientport", local.Port)
 	span.SetOperationName(fmt.Sprintf("%s->%v", proxyName, local.Port))
-	log.Debugf("Successfully created new lampshade TCP connection in %f seconds", time.Since(start).Seconds)
+	log.Debugf("Successfully created new lampshade TCP connection in %v seconds", time.Since(start).Seconds())
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create crypto spec for %v: %v", d.cipherCode, err)
