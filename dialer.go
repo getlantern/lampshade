@@ -181,7 +181,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, proxyName, upstreamHost
 			log.Debugf("Calling newSession after not allowing new stream on session: %v", s.String())
 			newSession(minLiveConns)
 		case <-time.After(d.redialSessionInterval):
-			log.Debugf("Calling newSesson after redialSessionInterval")
+			log.Debugf("Calling newSession after redialSessionInterval")
 			newSession(d.maxLiveConns)
 		case <-ctx.Done():
 			return nil, errors.New("No session available")
@@ -220,6 +220,7 @@ func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*ses
 	sessionContext := opentracing.ContextWithSpan(ctx, span)
 	dialSpan, ctx := opentracing.StartSpanFromContext(sessionContext, "lampshade-dial-init")
 	defer dialSpan.Finish()
+	start := time.Now()
 	conn, err := dial()
 	if err != nil {
 		return nil, err
@@ -230,7 +231,7 @@ func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*ses
 	span.SetTag("host", conn.RemoteAddr().String())
 	span.SetTag("clientport", local.Port)
 	span.SetOperationName(fmt.Sprintf("%s->%v", proxyName, local.Port))
-	log.Debug("Successfully dialed...")
+	log.Debugf("Successfully created new lampshade TCP connection in %v seconds", time.Since(start).Seconds)
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to create crypto spec for %v: %v", d.cipherCode, err)
