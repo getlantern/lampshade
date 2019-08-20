@@ -213,7 +213,8 @@ func (d *dialer) BoundTo(proxyName, upstreamHost string, dial DialFN) BoundDiale
 }
 
 func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*session, error) {
-	span := opentracing.StartSpan("lampshade-session")
+	// Start with the span labeled as failed. When/if it succeeds, it will be renamed.
+	span := opentracing.StartSpan("lampshade-failed-TCP")
 	defer span.Finish()
 	ctx := context.Background()
 	sessionContext := opentracing.ContextWithSpan(ctx, span)
@@ -224,10 +225,11 @@ func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*ses
 		return nil, err
 	}
 
+	local := conn.LocalAddr().(*net.TCPAddr)
 	span.SetTag("proto", "lampshade")
 	span.SetTag("host", conn.RemoteAddr().String())
-	span.SetTag("localaddr", conn.LocalAddr().String())
-	span.SetOperationName(proxyName + conn.LocalAddr().String())
+	span.SetTag("clientport", local.Port)
+	span.SetOperationName(fmt.Sprintf("%s->%v", proxyName, local.Port))
 	log.Debug("Successfully dialed...")
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
