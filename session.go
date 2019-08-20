@@ -318,7 +318,7 @@ func (s *session) recvLoop() {
 				return
 			}
 
-			c, open := s.getOrCreateStream(id, "recvLoop2")
+			c, open := s.getOrCreateStream(id, s.listenerStreamName(id))
 			if !open {
 				c.span.LogFields(otlog.Int("closed-data", 1))
 				if !alreadyLoggedReceiveForClosedStream[id] {
@@ -342,7 +342,7 @@ func (s *session) recvLoop() {
 }
 
 func (s *session) listenerStreamName(id uint16) string {
-	return s.streamName(id, s.RemoteAddr().String())
+	return s.streamName(id, "")
 }
 
 func (s *session) streamName(id uint16, hostID string) string {

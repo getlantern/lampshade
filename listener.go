@@ -126,7 +126,7 @@ func (l *listener) onConn(conn net.Conn) {
 }
 
 func (l *listener) doOnConn(conn net.Conn) error {
-	span := opentracing.StartSpan(fmt.Sprintf("lamp-listener-session-%v->%v"+conn.RemoteAddr().String(), conn.LocalAddr().String()))
+	span := opentracing.StartSpan(fmt.Sprintf("lampshade-%v->%v", conn.RemoteAddr().String(), conn.LocalAddr().String()))
 	defer span.Finish()
 	ctx := opentracing.ContextWithSpan(context.Background(), span)
 
