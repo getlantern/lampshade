@@ -18,7 +18,8 @@ import (
 	"github.com/getlantern/idletiming"
 	"github.com/getlantern/mtime"
 	"github.com/getlantern/ops"
-	"github.com/opentracing/opentracing-go"
+
+	otlog "github.com/opentracing/opentracing-go/log"
 )
 
 var (
@@ -83,7 +84,7 @@ type session struct {
 	out              chan []byte
 	echoOut          chan []byte
 	streams          map[uint16]*stream
-	closed           map[uint16]bool
+	closed           map[uint16]*stream
 	defunct          bool
 	connCh           chan net.Conn
 	beforeClose      func(*session)
@@ -94,8 +95,6 @@ type session struct {
 	nextID           uint32
 	mx               sync.RWMutex
 	ctx              context.Context
-	span             opentracing.Span
-	proxyName        string
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -103,7 +102,7 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(ctx context.Context, span opentracing.Span, proxyName string, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -119,17 +118,14 @@ func startSession(ctx context.Context, span opentracing.Span, proxyName string, 
 		out:              make(chan []byte),
 		echoOut:          make(chan []byte),
 		streams:          make(map[uint16]*stream),
-		closed:           make(map[uint16]bool),
+		closed:           make(map[uint16]*stream),
 		emaRTT:           emaRTT,
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
 		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
 		ctx:              ctx,
-		span:             span,
-		proxyName:        proxyName,
 	}
-	defer span.Finish()
 
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -259,7 +255,7 @@ func (s *session) recvLoop() {
 				// Padding is always at the end of a session frame, so stop processing
 				break frameLoop
 			case frameTypeACK:
-				c, open := s.getOrCreateStream(id, "recvLoop")
+				c, open := s.getOrCreateStream(id, s.listenerStreamName(id))
 				if !open {
 					// Stream was already closed, ignore
 					continue
@@ -324,8 +320,9 @@ func (s *session) recvLoop() {
 
 			c, open := s.getOrCreateStream(id, "recvLoop2")
 			if !open {
+				c.span.LogFields(otlog.Int("closed-data", 1))
 				if !alreadyLoggedReceiveForClosedStream[id] {
-					log.Debugf("Received data for closed stream %v on %v->%v -- closed: %v", id, s.LocalAddr().String(), s.proxyName, s.isClosed())
+					log.Debugf("Received data for closed stream %v on %v->%v -- closed: %v", id, s.LocalAddr().String(), s.RemoteAddr().String, s.isClosed())
 					alreadyLoggedReceiveForClosedStream[id] = true
 				}
 				// Stream was already closed, ignore
@@ -342,6 +339,14 @@ func (s *session) recvLoop() {
 			}
 		}
 	}
+}
+
+func (s *session) listenerStreamName(id uint16) string {
+	return s.streamName(id, s.RemoteAddr().String())
+}
+
+func (s *session) streamName(id uint16, hostID string) string {
+	return fmt.Sprintf("stream-%v-%v", id, hostID)
 }
 
 func (s *session) sendLoop() {
@@ -573,9 +578,9 @@ func (s *session) getOrCreateStream(id uint16, upstreamHost string) (*stream, bo
 		return c, true
 	}
 	closed := s.closed[id]
-	if closed {
+	if closed != nil {
 		s.mx.Unlock()
-		return nil, false
+		return closed, false
 	}
 
 	c = newStream(s.ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id, upstreamHost)
@@ -614,8 +619,14 @@ func (s *session) MarkDefunct() {
 }
 
 func (s *session) closeStream(id uint16) {
+	s.mx.Lock()
+	stream := s.streams[id]
+	if stream != nil {
+		s.closed[id] = stream
+	}
 	delete(s.streams, id)
-	s.closed[id] = true
+	s.mx.Unlock()
+
 	if s.defunct && len(s.streams) == 0 {
 		s.Close()
 	}

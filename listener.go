@@ -3,12 +3,16 @@ package lampshade
 import (
 	"context"
 	"crypto/rsa"
+	"errors"
+	"fmt"
 	"io"
 	"net"
 	"time"
 
 	"github.com/getlantern/ops"
 	"github.com/opentracing/opentracing-go"
+
+	otlog "github.com/opentracing/opentracing-go/log"
 )
 
 type listener struct {
@@ -122,23 +126,33 @@ func (l *listener) onConn(conn net.Conn) {
 }
 
 func (l *listener) doOnConn(conn net.Conn) error {
+	span := opentracing.StartSpan(fmt.Sprintf("lamp-listener-session-%v->%v"+conn.RemoteAddr().String(), conn.LocalAddr().String()))
+	defer span.Finish()
+	ctx := opentracing.ContextWithSpan(context.Background(), span)
+
 	start := time.Now()
 	// Read client init msg
 	initMsg := make([]byte, clientInitSize)
 	// Try to read start sequence
 	_, err := io.ReadFull(conn, initMsg)
 	if err != nil {
-		fullErr := log.Errorf("Unable to read client init msg %v after %v from %v ", err, time.Since(start), conn.RemoteAddr())
+		errText := fmt.Sprintf("Unable to read client init msg %v after %v from %v ", err, time.Since(start), conn.RemoteAddr())
+		span.LogFields(otlog.String("init-error", errText))
+		span.SetTag("error", "1")
+		fullErr := errors.New(errText)
 		l.onError(conn, fullErr)
 		return fullErr
 	}
 	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
-		fullErr := log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+		errText := fmt.Sprintf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+		span.LogFields(otlog.String("decode-error", errText))
+		span.SetTag("error", "1")
+		fullErr := errors.New(errText)
 		l.onError(conn, fullErr)
 		return fullErr
 	}
-	span := opentracing.StartSpan("lampshade-listener-session")
-	startSession(context.Background(), span, "lampshade-listener", conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
+
+	startSession(ctx, conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
 	return nil
 }

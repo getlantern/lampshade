@@ -214,6 +214,7 @@ func (d *dialer) BoundTo(proxyName, upstreamHost string, dial DialFN) BoundDiale
 
 func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*session, error) {
 	span := opentracing.StartSpan("lampshade-session")
+	defer span.Finish()
 	ctx := context.Background()
 	sessionContext := opentracing.ContextWithSpan(ctx, span)
 	dialSpan, ctx := opentracing.StartSpanFromContext(sessionContext, "lampshade-dial-init")
@@ -239,7 +240,7 @@ func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*ses
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(sessionContext, span, proxyName, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
+	return startSession(sessionContext, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
 }
 
 type boundDialer struct {
