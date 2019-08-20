@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"strings"
 	"time"
 
 	"github.com/getlantern/ops"
@@ -126,14 +125,22 @@ func (l *listener) onConn(conn net.Conn) {
 	}
 }
 
+var traceIPs = map[string]bool{
+	"65.214.166.18":  true,
+	"115.159.105.71": true,
+}
+
 func (l *listener) doOnConn(conn net.Conn) error {
 	var ctx context.Context
 	var span opentracing.Span
-	if strings.Contains(conn.RemoteAddr().String(), "65.214.166.18") {
+	ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+	if _, ok := traceIPs[ip]; ok {
+		log.Debugf("Tracing IP %v", ip)
 		span = opentracing.StartSpan(fmt.Sprintf("lampshade-%v->%v", conn.RemoteAddr().String(), conn.LocalAddr().String()))
 		defer span.Finish()
 		ctx = opentracing.ContextWithSpan(context.Background(), span)
 	} else {
+		log.Debugf("Not tracing IP %v", ip)
 		ctx = context.Background()
 		noop := opentracing.NoopTracer{}
 		span = noop.StartSpan("noop")
