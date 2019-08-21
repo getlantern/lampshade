@@ -440,11 +440,13 @@ func (snd *sender) send(frame []byte) (open bool) {
 	open = snd.coalesceAdditionalFrames()
 
 	if snd.pingInterval > 0 {
+		snd.mx.Lock()
 		now := time.Now()
 		if now.Sub(snd.lastPing) > snd.pingInterval {
 			snd.bufferFrame(ping())
 			snd.lastPing = now
 		}
+		snd.mx.Unlock()
 	}
 
 	if log.IsTraceEnabled() {
