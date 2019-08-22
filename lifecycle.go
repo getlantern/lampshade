@@ -6,7 +6,10 @@ import "context"
 type LifecycleListener interface {
 	OnSessionInit(context.Context) context.Context
 
-	OnTCPConn()
+	OnTCPConnReceived()
+	OnReadClientInitError(string)
+	OnDecodeClientInitError(string)
+
 	OnTCPStart(context.Context)
 	OnTCPEstablished(context.Context)
 

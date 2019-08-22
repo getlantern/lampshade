@@ -18,14 +18,13 @@ require (
 	github.com/getlantern/hidden v0.0.0-20190325191715-f02dbb02be55 // indirect
 	github.com/getlantern/idletiming v0.0.0-20190529182719-d2fbc83372a5
 	github.com/getlantern/keyman v0.0.0-20180207174507-f55e7280e93a
+	github.com/getlantern/mockconn v0.0.0-20190708122800-637bd46d8034 // indirect
 	github.com/getlantern/mtime v0.0.0-20170117193331-ba114e4a82b0
 	github.com/getlantern/netx v0.0.0-20190110220209-9912de6f94fd // indirect
 	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f
 	github.com/getlantern/tlsdefaults v0.0.0-20171004213447-cf35cfd0b1b4
 	github.com/go-stack/stack v1.8.0 // indirect
-	github.com/opentracing/opentracing-go v1.1.0
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c
-	github.com/siddontang/go v0.0.0-20180604090527-bdc77568d726
 	github.com/stretchr/testify v1.3.0
 	golang.org/x/crypto v0.0.0-20190701094942-4def268fd1a4
 )

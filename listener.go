@@ -10,9 +10,6 @@ import (
 	"time"
 
 	"github.com/getlantern/ops"
-	"github.com/opentracing/opentracing-go"
-
-	otlog "github.com/opentracing/opentracing-go/log"
 )
 
 type listener struct {
@@ -133,20 +130,23 @@ var traceIPs = map[string]bool{
 }
 
 func (l *listener) doOnConn(conn net.Conn) error {
-	var ctx context.Context
-	var span opentracing.Span
-	ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
-	if _, ok := traceIPs[ip]; ok {
-		log.Debugf("Tracing IP %v", ip)
-		span = opentracing.StartSpan(fmt.Sprintf("lampshade-%v->%v", conn.RemoteAddr().String(), conn.LocalAddr().String()))
-		defer span.Finish()
-		ctx = opentracing.ContextWithSpan(context.Background(), span)
-	} else {
-		log.Debugf("Not tracing IP %v", ip)
-		ctx = context.Background()
-		noop := opentracing.NoopTracer{}
-		span = noop.StartSpan("noop")
-	}
+	ctx := context.Background()
+	/*
+		var span opentracing.Span
+		ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
+		if _, ok := traceIPs[ip]; ok {
+			log.Debugf("Tracing IP %v", ip)
+			span = opentracing.StartSpan(fmt.Sprintf("lampshade-%v->%v", conn.RemoteAddr().String(), conn.LocalAddr().String()))
+			defer span.Finish()
+			ctx = opentracing.ContextWithSpan(ctx, span)
+		} else {
+			log.Debugf("Not tracing IP %v", ip)
+
+			noop := opentracing.NoopTracer{}
+			span = noop.StartSpan("noop")
+		}
+	*/
+	l.lifecycle.OnTCPConnReceived()
 
 	start := time.Now()
 	// Read client init msg
@@ -155,8 +155,9 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	_, err := io.ReadFull(conn, initMsg)
 	if err != nil {
 		errText := fmt.Sprintf("Unable to read client init msg %v after %v from %v ", err, time.Since(start), conn.RemoteAddr())
-		span.LogFields(otlog.String("init-error", errText))
-		span.SetTag("error", "1")
+		//span.LogFields(otlog.String("init-error", errText))
+		//span.SetTag("error", "1")
+		l.lifecycle.OnReadClientInitError(errText)
 		fullErr := errors.New(errText)
 		l.onError(conn, fullErr)
 		return fullErr
@@ -164,8 +165,9 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
 		errText := fmt.Sprintf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
-		span.LogFields(otlog.String("decode-error", errText))
-		span.SetTag("error", "1")
+		l.lifecycle.OnDecodeClientInitError(errText)
+		//span.LogFields(otlog.String("decode-error", errText))
+		//span.SetTag("error", "1")
 		fullErr := errors.New(errText)
 		l.onError(conn, fullErr)
 		return fullErr
