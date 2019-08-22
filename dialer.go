@@ -215,14 +215,6 @@ func (d *dialer) startSession(lifecycle LifecycleListener, dial DialFN) (*sessio
 	// Start with the span labeled as failed. When/if it succeeds, it will be renamed.
 	ctx := context.Background()
 	sessionContext := lifecycle.OnSessionInit(ctx)
-	/*
-		span := opentracing.StartSpan("lampshade-failed-TCP")
-		defer span.Finish()
-
-		sessionContext := opentracing.ContextWithSpan(ctx, span)
-		dialSpan, ctx := opentracing.StartSpanFromContext(sessionContext, "lampshade-dial-init")
-		defer dialSpan.Finish()
-	*/
 	lifecycle.OnTCPStart(sessionContext)
 	start := time.Now()
 	conn, err := dial()
@@ -231,14 +223,6 @@ func (d *dialer) startSession(lifecycle LifecycleListener, dial DialFN) (*sessio
 		return nil, err
 	}
 	lifecycle.OnTCPEstablished(conn)
-
-	/*
-		local := conn.LocalAddr().(*net.TCPAddr)
-		span.SetTag("proto", "lampshade")
-		span.SetTag("host", conn.RemoteAddr().String())
-		span.SetTag("clientport", local.Port)
-		span.SetOperationName(fmt.Sprintf("%s->%v", proxyName, local.Port))
-	*/
 	log.Debugf("Successfully created new lampshade TCP connection in %v seconds", time.Since(start).Seconds())
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
