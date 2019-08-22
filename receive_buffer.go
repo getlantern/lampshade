@@ -95,7 +95,7 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				return
 			}
 
-			// We haven't ready anything, wait up till deadline to read
+			// We haven't read anything, wait until deadline to read
 			now := time.Now()
 			if deadline.IsZero() {
 				// Default deadline to something really large so that we effectively
