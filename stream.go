@@ -30,7 +30,7 @@ type stream struct {
 
 func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, lifecycle LifecycleListener) *stream {
 	atomic.AddInt64(&openStreams, 1)
-	lifecycle.OnStreamInit(id)
+	lifecycle.OnStreamInit(ctx, id)
 	/*
 			// If there is an existing parent span, create a child span. Otherwise do not trace.
 		opts := make([]opentracing.StartSpanOption, 0)

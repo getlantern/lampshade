@@ -521,6 +521,7 @@ func (snd *sender) coalesce(b []byte) {
 }
 
 func (s *session) onSessionError(readErr error, writeErr error) {
+	s.lifecycle.OnSessionError(readErr, writeErr)
 	s.Close()
 	s.mx.RLock()
 	streams := make([]*stream, 0, len(s.streams))

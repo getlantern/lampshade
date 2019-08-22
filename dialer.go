@@ -227,8 +227,10 @@ func (d *dialer) startSession(lifecycle LifecycleListener, dial DialFN) (*sessio
 	start := time.Now()
 	conn, err := dial()
 	if err != nil {
+		lifecycle.OnTCPConnectionError(err)
 		return nil, err
 	}
+	lifecycle.OnTCPEstablished(conn)
 
 	/*
 		local := conn.LocalAddr().(*net.TCPAddr)
