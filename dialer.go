@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/getlantern/ema"
-	"github.com/opentracing/opentracing-go"
 )
 
 const (
@@ -123,16 +122,16 @@ type dialer struct {
 	emaRTT                *ema.EMA
 }
 
-func (d *dialer) Dial(proxyName, upstreamHost string, dial DialFN) (net.Conn, error) {
-	return d.DialContext(context.Background(), proxyName, upstreamHost, dial)
+func (d *dialer) Dial(lifecycle LifecycleListener, dial DialFN) (net.Conn, error) {
+	return d.DialContext(context.Background(), lifecycle, dial)
 }
 
-func (d *dialer) DialContext(ctx context.Context, proxyName, upstreamHost string, dial DialFN) (net.Conn, error) {
-	s, err := d.getOrCreateSession(ctx, proxyName, upstreamHost, dial)
+func (d *dialer) DialContext(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (net.Conn, error) {
+	s, err := d.getOrCreateSession(ctx, lifecycle, dial)
 	if err != nil {
 		return nil, err
 	}
-	c := s.CreateStream(upstreamHost)
+	c := s.CreateStream(lifecycle)
 	d.returnSession(s)
 	return c, nil
 }
@@ -144,7 +143,7 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getOrCreateSession(ctx context.Context, proxyName, upstreamHost string, dial DialFN) (sessionIntf, error) {
+func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (sessionIntf, error) {
 	newSession := func(cap int) {
 		d.muNumLivePending.Lock()
 		if d.numLive+d.numPending >= cap {
@@ -154,7 +153,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, proxyName, upstreamHost
 		d.numPending++
 		d.muNumLivePending.Unlock()
 		go func() {
-			s, err := d.startSession(proxyName, upstreamHost, dial)
+			s, err := d.startSession(lifecycle, dial)
 			d.muNumLivePending.Lock()
 			d.numPending--
 			if err != nil {
@@ -208,29 +207,36 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) BoundTo(proxyName, upstreamHost string, dial DialFN) BoundDialer {
+func (d *dialer) BoundTo(lifecycle LifecycleListener, dial DialFN) BoundDialer {
 	return &boundDialer{d, dial}
 }
 
-func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*session, error) {
+func (d *dialer) startSession(lifecycle LifecycleListener, dial DialFN) (*session, error) {
 	// Start with the span labeled as failed. When/if it succeeds, it will be renamed.
-	span := opentracing.StartSpan("lampshade-failed-TCP")
-	defer span.Finish()
 	ctx := context.Background()
-	sessionContext := opentracing.ContextWithSpan(ctx, span)
-	dialSpan, ctx := opentracing.StartSpanFromContext(sessionContext, "lampshade-dial-init")
-	defer dialSpan.Finish()
+	sessionContext := lifecycle.OnSessionInit(ctx)
+	/*
+		span := opentracing.StartSpan("lampshade-failed-TCP")
+		defer span.Finish()
+
+		sessionContext := opentracing.ContextWithSpan(ctx, span)
+		dialSpan, ctx := opentracing.StartSpanFromContext(sessionContext, "lampshade-dial-init")
+		defer dialSpan.Finish()
+	*/
+	lifecycle.OnTCPStart(sessionContext)
 	start := time.Now()
 	conn, err := dial()
 	if err != nil {
 		return nil, err
 	}
 
-	local := conn.LocalAddr().(*net.TCPAddr)
-	span.SetTag("proto", "lampshade")
-	span.SetTag("host", conn.RemoteAddr().String())
-	span.SetTag("clientport", local.Port)
-	span.SetOperationName(fmt.Sprintf("%s->%v", proxyName, local.Port))
+	/*
+		local := conn.LocalAddr().(*net.TCPAddr)
+		span.SetTag("proto", "lampshade")
+		span.SetTag("host", conn.RemoteAddr().String())
+		span.SetTag("clientport", local.Port)
+		span.SetOperationName(fmt.Sprintf("%s->%v", proxyName, local.Port))
+	*/
 	log.Debugf("Successfully created new lampshade TCP connection in %v seconds", time.Since(start).Seconds())
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
@@ -243,7 +249,7 @@ func (d *dialer) startSession(proxyName, upstreamHost string, dial DialFN) (*ses
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(sessionContext, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
+	return startSession(sessionContext, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, lifecycle)
 }
 
 type boundDialer struct {
@@ -252,10 +258,10 @@ type boundDialer struct {
 	dial DialFN
 }
 
-func (bd *boundDialer) Dial(proxyName, upstreamHost string) (net.Conn, error) {
-	return bd.Dialer.Dial(proxyName, upstreamHost, bd.dial)
+func (bd *boundDialer) Dial(lifecycle LifecycleListener) (net.Conn, error) {
+	return bd.Dialer.Dial(lifecycle, bd.dial)
 }
 
-func (bd *boundDialer) DialContext(ctx context.Context, proxyName, upstreamHost string) (net.Conn, error) {
-	return bd.Dialer.DialContext(ctx, proxyName, upstreamHost, bd.dial)
+func (bd *boundDialer) DialContext(ctx context.Context, lifecycle LifecycleListener) (net.Conn, error) {
+	return bd.Dialer.DialContext(ctx, lifecycle, bd.dial)
 }

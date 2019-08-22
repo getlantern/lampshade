@@ -8,10 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"github.com/opentracing/opentracing-go"
-
-	otlog "github.com/opentracing/opentracing-go/log"
 )
 
 // a stream is a multiplexed net.Conn operating on top of a physical net.Conn
@@ -29,32 +25,32 @@ type stream struct {
 	finalWriteErr error
 	mx            sync.RWMutex
 	id            uint16
-	span          opentracing.Span
-	upstreamHost  string
+	lifecycle     LifecycleListener
 }
 
-func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, upstreamHost string) *stream {
+func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, lifecycle LifecycleListener) *stream {
 	atomic.AddInt64(&openStreams, 1)
-
-	// If there is an existing parent span, create a child span. Otherwise do not trace.
-	opts := make([]opentracing.StartSpanOption, 0)
-	var span opentracing.Span
-	if parentSpan := opentracing.SpanFromContext(ctx); parentSpan != nil {
-		opts = append(opts, opentracing.ChildOf(parentSpan.Context()))
-		span = opentracing.GlobalTracer().StartSpan(fmt.Sprintf("stream-%v-%v", id, upstreamHost), opts...)
-	} else {
-		noop := opentracing.NoopTracer{}
-		span = noop.StartSpan("noop")
-	}
+	lifecycle.OnStreamInit(id)
+	/*
+			// If there is an existing parent span, create a child span. Otherwise do not trace.
+		opts := make([]opentracing.StartSpanOption, 0)
+			var span opentracing.Span
+			if parentSpan := opentracing.SpanFromContext(ctx); parentSpan != nil {
+				opts = append(opts, opentracing.ChildOf(parentSpan.Context()))
+				span = opentracing.GlobalTracer().StartSpan(fmt.Sprintf("stream-%v-%v", id, upstreamHost), opts...)
+			} else {
+				noop := opentracing.NoopTracer{}
+				span = noop.StartSpan("noop")
+			}
+	*/
 	return &stream{
-		Conn:         s,
-		session:      s,
-		pool:         bp,
-		sb:           newSendBuffer(defaultHeader, w, windowSize),
-		rb:           newReceiveBuffer(defaultHeader, w, bp, windowSize),
-		id:           id,
-		span:         span,
-		upstreamHost: upstreamHost,
+		Conn:      s,
+		session:   s,
+		pool:      bp,
+		sb:        newSendBuffer(defaultHeader, w, windowSize),
+		rb:        newReceiveBuffer(defaultHeader, w, bp, windowSize),
+		id:        id,
+		lifecycle: lifecycle,
 	}
 }
 
@@ -67,7 +63,8 @@ func (c *stream) Read(b []byte) (int, error) {
 		return 0, finalReadErr
 	}
 	num, err := c.rb.read(b, readDeadline)
-	c.span.LogFields(otlog.Int("r", num))
+	c.lifecycle.OnStreamRead(num)
+	//c.span.LogFields(otlog.Int("r", num))
 	return num, err
 }
 
@@ -90,7 +87,8 @@ func (c *stream) Write(b []byte) (int, error) {
 	b = c.pool.getForFrame()[:len(b)]
 	copy(b, _b)
 	num, err := c.sb.send(b, writeDeadline)
-	c.span.LogFields(otlog.Int("w", num))
+	c.lifecycle.OnStreamWrite(num)
+	//c.span.LogFields(otlog.Int("w", num))
 	return num, err
 }
 
@@ -133,7 +131,8 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 		atomic.AddInt64(&closingStreams, -1)
 		atomic.AddInt64(&openStreams, -1)
 		atomic.AddInt64(&closedStreams, 1)
-		c.span.Finish()
+		c.lifecycle.OnStreamClose()
+		//c.span.Finish()
 	}
 	c.mx.Unlock()
 	return nil

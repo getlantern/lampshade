@@ -18,8 +18,6 @@ import (
 	"github.com/getlantern/idletiming"
 	"github.com/getlantern/mtime"
 	"github.com/getlantern/ops"
-
-	otlog "github.com/opentracing/opentracing-go/log"
 )
 
 var (
@@ -51,7 +49,7 @@ func trackStats() {
 type sessionIntf interface {
 	AllowNewStream(maxStreamPerConn uint16) bool
 	MarkDefunct()
-	CreateStream(string) *stream
+	CreateStream(LifecycleListener) *stream
 	String() string
 }
 type nullSession struct{}
@@ -59,9 +57,9 @@ type nullSession struct{}
 func (s nullSession) AllowNewStream(maxStreamPerConn uint16) bool {
 	return false
 }
-func (s nullSession) MarkDefunct()                {}
-func (s nullSession) CreateStream(string) *stream { panic("should never be called") }
-func (s nullSession) String() string              { return "nullSession" }
+func (s nullSession) MarkDefunct()                           {}
+func (s nullSession) CreateStream(LifecycleListener) *stream { panic("should never be called") }
+func (s nullSession) String() string                         { return "nullSession" }
 
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
@@ -94,6 +92,7 @@ type session struct {
 	lastDialed       time.Time
 	nextID           uint32
 	mx               sync.RWMutex
+	lifecycle        LifecycleListener
 	ctx              context.Context
 }
 
@@ -102,7 +101,9 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
+	cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn,
+	beforeClose func(*session), lifecycle LifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -124,6 +125,7 @@ func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
 		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
+		lifecycle:        lifecycle,
 		ctx:              ctx,
 	}
 
@@ -255,7 +257,7 @@ func (s *session) recvLoop() {
 				// Padding is always at the end of a session frame, so stop processing
 				break frameLoop
 			case frameTypeACK:
-				c, open := s.getOrCreateStream(id, "")
+				c, open := s.getOrCreateStream(id, s.lifecycle)
 				if !open {
 					// Stream was already closed, ignore
 					continue
@@ -318,9 +320,8 @@ func (s *session) recvLoop() {
 				return
 			}
 
-			c, open := s.getOrCreateStream(id, "")
+			c, open := s.getOrCreateStream(id, s.lifecycle)
 			if !open {
-				c.span.LogFields(otlog.Int("closed-data", 1))
 				if !alreadyLoggedReceiveForClosedStream[id] {
 					log.Debugf("Received data for closed stream %v on %v->%v -- closed: %v", id, s.LocalAddr().String(), s.RemoteAddr().String, s.isClosed())
 					alreadyLoggedReceiveForClosedStream[id] = true
@@ -555,14 +556,14 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 
 }
 
-func (s *session) CreateStream(upstreamHost string) *stream {
+func (s *session) CreateStream(lifecycle LifecycleListener) *stream {
 	nextID := atomic.AddUint32(&s.nextID, 1)
-	stream, _ := s.getOrCreateStream(uint16(nextID-1), upstreamHost)
+	stream, _ := s.getOrCreateStream(uint16(nextID-1), lifecycle)
 	s.lastDialed = time.Now()
 	return stream
 }
 
-func (s *session) getOrCreateStream(id uint16, upstreamHost string) (*stream, bool) {
+func (s *session) getOrCreateStream(id uint16, lifecycle LifecycleListener) (*stream, bool) {
 	s.mx.Lock()
 	c := s.streams[id]
 	if c != nil {
@@ -575,7 +576,7 @@ func (s *session) getOrCreateStream(id uint16, upstreamHost string) (*stream, bo
 		return closed, false
 	}
 
-	c = newStream(s.ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id, upstreamHost)
+	c = newStream(s.ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id, lifecycle)
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {

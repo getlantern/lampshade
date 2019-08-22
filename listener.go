@@ -23,6 +23,7 @@ type listener struct {
 	onError          func(conn net.Conn, err error)
 	errCh            chan error
 	connCh           chan net.Conn
+	lifecycle        LifecycleListener
 }
 
 // WrapListener wraps the given listener with support for multiplexing. Only
@@ -43,13 +44,13 @@ type listener struct {
 //
 // ackOnFirst - forces an immediate ACK after receiving the first frame, which could help defeat timing attacks
 //
-func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool) net.Listener {
-	return WrapListenerIncludingErrorHandler(wrapped, pool, serverPrivateKey, ackOnFirst, nil)
+func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, lifecycle LifecycleListener) net.Listener {
+	return WrapListenerIncludingErrorHandler(wrapped, pool, serverPrivateKey, ackOnFirst, nil, lifecycle)
 }
 
 // WrapListenerIncludingErrorHandler is like WrapListener and also supports a
 // callback for errors on accepting new connections.
-func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error)) net.Listener {
+func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error), lifecycle LifecycleListener) net.Listener {
 	if onError == nil {
 		onError = func(net.Conn, error) {}
 	}
@@ -63,6 +64,7 @@ func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, se
 		onError:          onError,
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
+		lifecycle:        lifecycle,
 	}
 	ops.Go(l.process)
 	trackStats()
@@ -169,6 +171,6 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		return fullErr
 	}
 
-	startSession(ctx, conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
+	startSession(ctx, conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil, l.lifecycle)
 	return nil
 }
