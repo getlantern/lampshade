@@ -25,24 +25,11 @@ type stream struct {
 	finalWriteErr error
 	mx            sync.RWMutex
 	id            uint16
-	lifecycle     LifecycleListener
+	lifecycle     StreamLifecycleListener
 }
 
 func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, lifecycle LifecycleListener) *stream {
 	atomic.AddInt64(&openStreams, 1)
-	lifecycle.OnStreamInit(ctx, id)
-	/*
-			// If there is an existing parent span, create a child span. Otherwise do not trace.
-		opts := make([]opentracing.StartSpanOption, 0)
-			var span opentracing.Span
-			if parentSpan := opentracing.SpanFromContext(ctx); parentSpan != nil {
-				opts = append(opts, opentracing.ChildOf(parentSpan.Context()))
-				span = opentracing.GlobalTracer().StartSpan(fmt.Sprintf("stream-%v-%v", id, upstreamHost), opts...)
-			} else {
-				noop := opentracing.NoopTracer{}
-				span = noop.StartSpan("noop")
-			}
-	*/
 	return &stream{
 		Conn:      s,
 		session:   s,
@@ -50,7 +37,7 @@ func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, wind
 		sb:        newSendBuffer(defaultHeader, w, windowSize),
 		rb:        newReceiveBuffer(defaultHeader, w, bp, windowSize),
 		id:        id,
-		lifecycle: lifecycle,
+		lifecycle: lifecycle.OnStreamInit(ctx, id),
 	}
 }
 
@@ -64,7 +51,6 @@ func (c *stream) Read(b []byte) (int, error) {
 	}
 	num, err := c.rb.read(b, readDeadline)
 	c.lifecycle.OnStreamRead(num)
-	//c.span.LogFields(otlog.Int("r", num))
 	return num, err
 }
 
@@ -88,7 +74,6 @@ func (c *stream) Write(b []byte) (int, error) {
 	copy(b, _b)
 	num, err := c.sb.send(b, writeDeadline)
 	c.lifecycle.OnStreamWrite(num)
-	//c.span.LogFields(otlog.Int("w", num))
 	return num, err
 }
 
