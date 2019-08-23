@@ -3,7 +3,6 @@ package lampshade
 import (
 	"context"
 	"crypto/rsa"
-	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -144,6 +143,8 @@ func (d *dialer) getNumLivePending() int {
 }
 
 func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (sessionIntf, error) {
+	start := time.Now()
+	sessionContext := lifecycle.OnSessionInit(ctx)
 	newSession := func(cap int) {
 		d.muNumLivePending.Lock()
 		if d.numLive+d.numPending >= cap {
@@ -153,7 +154,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle LifecycleList
 		d.numPending++
 		d.muNumLivePending.Unlock()
 		go func() {
-			s, err := d.startSession(lifecycle, dial)
+			s, err := d.startSession(sessionContext, lifecycle, dial)
 			d.muNumLivePending.Lock()
 			d.numPending--
 			if err != nil {
@@ -183,7 +184,9 @@ func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle LifecycleList
 			log.Debugf("Calling newSession after redialSessionInterval")
 			newSession(d.maxLiveConns)
 		case <-ctx.Done():
-			return nil, errors.New("No session available")
+			err := fmt.Errorf("No session available after %f", time.Since(start).Seconds())
+			lifecycle.OnSessionError(err, nil)
+			return nil, err
 		}
 	}
 }
@@ -211,11 +214,8 @@ func (d *dialer) BoundTo(lifecycle LifecycleListener, dial DialFN) BoundDialer {
 	return &boundDialer{d, dial}
 }
 
-func (d *dialer) startSession(lifecycle LifecycleListener, dial DialFN) (*session, error) {
-	// Start with the span labeled as failed. When/if it succeeds, it will be renamed.
-	ctx := context.Background()
-	sessionContext := lifecycle.OnSessionInit(ctx)
-	lifecycle.OnTCPStart(sessionContext)
+func (d *dialer) startSession(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (*session, error) {
+	lifecycle.OnTCPStart(ctx)
 	start := time.Now()
 	conn, err := dial()
 	if err != nil {
@@ -235,7 +235,7 @@ func (d *dialer) startSession(lifecycle LifecycleListener, dial DialFN) (*sessio
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(sessionContext, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, lifecycle)
+	return startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, lifecycle)
 }
 
 type boundDialer struct {
