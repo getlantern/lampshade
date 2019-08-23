@@ -142,7 +142,7 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (sessionIntf, error) {
+func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (sessionIntf, error) {
 	start := time.Now()
 	sessionContext := lifecycle.OnSessionInit(ctx)
 	newSession := func(cap int) {
@@ -213,7 +213,7 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) BoundTo(lifecycle LifecycleListener, dial DialFN) BoundDialer {
+func (d *dialer) BoundTo(lifecycle ClientLifecycleListener, dial DialFN) BoundDialer {
 	return &boundDialer{d, dial}
 }
 
@@ -247,10 +247,10 @@ type boundDialer struct {
 	dial DialFN
 }
 
-func (bd *boundDialer) Dial(lifecycle LifecycleListener) (net.Conn, error) {
+func (bd *boundDialer) Dial(lifecycle ClientLifecycleListener) (net.Conn, error) {
 	return bd.Dialer.Dial(lifecycle, bd.dial)
 }
 
-func (bd *boundDialer) DialContext(ctx context.Context, lifecycle LifecycleListener) (net.Conn, error) {
+func (bd *boundDialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error) {
 	return bd.Dialer.DialContext(ctx, lifecycle, bd.dial)
 }

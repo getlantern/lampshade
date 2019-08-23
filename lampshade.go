@@ -303,14 +303,14 @@ type Dialer interface {
 
 	// Dial creates a virtual connection to the lampshade server, using the given
 	// DialFN to open a physical connection when necessary.
-	Dial(lifecycle LifecycleListener, dial DialFN) (net.Conn, error)
+	Dial(lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error)
 
 	// DialContext is the same as Dial but with the specific context.
-	DialContext(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (net.Conn, error)
+	DialContext(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error)
 
 	// BoundTo returns a BoundDialer that uses the given DialFN to connect to the
 	// lampshade server.
-	BoundTo(lifecycle LifecycleListener, dial DialFN) BoundDialer
+	BoundTo(lifecycle ClientLifecycleListener, dial DialFN) BoundDialer
 }
 
 // BoundDialer is a Dialer bound to a specific DialFN for connecting to the
@@ -319,10 +319,10 @@ type BoundDialer interface {
 	StatsTracking
 
 	// Dial creates a virtual connection to the lampshade server.
-	Dial(lifecycle LifecycleListener) (net.Conn, error)
+	Dial(lifecycle ClientLifecycleListener) (net.Conn, error)
 
 	// DialContext is the same as Dial but with the specific context.
-	DialContext(ctx context.Context, lifecycle LifecycleListener) (net.Conn, error)
+	DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error)
 }
 
 // Session is a wrapper around a net.Conn that supports multiplexing.
