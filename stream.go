@@ -117,7 +117,6 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 		atomic.AddInt64(&openStreams, -1)
 		atomic.AddInt64(&closedStreams, 1)
 		c.lifecycle.OnStreamClose()
-		//c.span.Finish()
 	}
 	c.mx.Unlock()
 	return nil

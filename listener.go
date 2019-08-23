@@ -20,7 +20,7 @@ type listener struct {
 	onError          func(conn net.Conn, err error)
 	errCh            chan error
 	connCh           chan net.Conn
-	lifecycle        LifecycleListener
+	lifecycle        ServerLifecycleListener
 }
 
 // WrapListener wraps the given listener with support for multiplexing. Only
@@ -41,13 +41,13 @@ type listener struct {
 //
 // ackOnFirst - forces an immediate ACK after receiving the first frame, which could help defeat timing attacks
 //
-func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, lifecycle LifecycleListener) net.Listener {
+func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, lifecycle ServerLifecycleListener) net.Listener {
 	return WrapListenerIncludingErrorHandler(wrapped, pool, serverPrivateKey, ackOnFirst, nil, lifecycle)
 }
 
 // WrapListenerIncludingErrorHandler is like WrapListener and also supports a
 // callback for errors on accepting new connections.
-func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error), lifecycle LifecycleListener) net.Listener {
+func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error), lifecycle ServerLifecycleListener) net.Listener {
 	if onError == nil {
 		onError = func(net.Conn, error) {}
 	}
@@ -146,7 +146,7 @@ func (l *listener) doOnConn(conn net.Conn) error {
 			span = noop.StartSpan("noop")
 		}
 	*/
-	l.lifecycle.OnTCPConnReceived()
+	l.lifecycle.OnTCPConnReceived(conn)
 
 	start := time.Now()
 	// Read client init msg

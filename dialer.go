@@ -121,11 +121,11 @@ type dialer struct {
 	emaRTT                *ema.EMA
 }
 
-func (d *dialer) Dial(lifecycle LifecycleListener, dial DialFN) (net.Conn, error) {
+func (d *dialer) Dial(lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error) {
 	return d.DialContext(context.Background(), lifecycle, dial)
 }
 
-func (d *dialer) DialContext(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (net.Conn, error) {
+func (d *dialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error) {
 	s, err := d.getOrCreateSession(ctx, lifecycle, dial)
 	if err != nil {
 		return nil, err
@@ -217,7 +217,7 @@ func (d *dialer) BoundTo(lifecycle LifecycleListener, dial DialFN) BoundDialer {
 	return &boundDialer{d, dial}
 }
 
-func (d *dialer) startSession(ctx context.Context, lifecycle LifecycleListener, dial DialFN) (*session, error) {
+func (d *dialer) startSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (*session, error) {
 	lifecycle.OnTCPStart(ctx)
 	start := time.Now()
 	conn, err := dial()
