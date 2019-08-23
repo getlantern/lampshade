@@ -184,8 +184,11 @@ func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle LifecycleList
 			log.Debugf("Calling newSession after redialSessionInterval")
 			newSession(d.maxLiveConns)
 		case <-ctx.Done():
-			err := fmt.Errorf("No session available after %f", time.Since(start).Seconds())
-			lifecycle.OnSessionError(err, nil)
+			elapsed := time.Since(start).Seconds()
+			err := fmt.Errorf("No session available after %f", elapsed)
+			if elapsed < 2.0 {
+				lifecycle.OnSessionError(err, nil)
+			}
 			return nil, err
 		}
 	}
