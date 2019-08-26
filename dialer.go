@@ -147,12 +147,12 @@ func (d *dialer) maintainTCPConnection() (net.Conn, error) {
 	}
 }
 
-func (d *dialer) Dial(lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error) {
-	return d.DialContext(context.Background(), lifecycle, dial)
+func (d *dialer) Dial(lifecycle ClientLifecycleListener) (net.Conn, error) {
+	return d.DialContext(context.Background(), lifecycle)
 }
 
-func (d *dialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error) {
-	ctx, s, err := d.getSession(ctx, lifecycle, dial)
+func (d *dialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error) {
+	ctx, s, err := d.getSession(ctx, lifecycle)
 	if err != nil {
 		return nil, err
 	}
@@ -168,7 +168,7 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (context.Context, sessionIntf, error) {
+func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListener) (context.Context, sessionIntf, error) {
 	start := time.Now()
 	for {
 		select {
@@ -224,10 +224,6 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) BoundTo(lifecycle ClientLifecycleListener, dial DialFN) BoundDialer {
-	return &boundDialer{d, dial}
-}
-
 func (d *dialer) startSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (*session, error) {
 	//ctx = lifecycle.OnSessionInit(ctx)
 	//lifecycle.OnTCPStart(ctx)
@@ -266,18 +262,4 @@ type dialerLifecycleWrapper struct {
 func (dlw *dialerLifecycleWrapper) OnTCPClosed() {
 	dlw.ClientLifecycleListener.OnTCPClosed()
 	dlw.d.requiredSessions <- true
-}
-
-type boundDialer struct {
-	Dialer
-
-	dial DialFN
-}
-
-func (bd *boundDialer) Dial(lifecycle ClientLifecycleListener) (net.Conn, error) {
-	return bd.Dialer.Dial(lifecycle, bd.dial)
-}
-
-func (bd *boundDialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error) {
-	return bd.Dialer.DialContext(ctx, lifecycle, bd.dial)
 }
