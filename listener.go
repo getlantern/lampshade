@@ -1,7 +1,6 @@
 package lampshade
 
 import (
-	"context"
 	"crypto/rsa"
 	"errors"
 	"fmt"
@@ -130,7 +129,7 @@ var traceIPs = map[string]bool{
 }
 
 func (l *listener) doOnConn(conn net.Conn) error {
-	ctx := context.Background()
+	//ctx := context.Background()
 	/*
 		var span opentracing.Span
 		ip := conn.RemoteAddr().(*net.TCPAddr).IP.String()
@@ -173,6 +172,6 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		return fullErr
 	}
 
-	startSession(ctx, conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil, l.lifecycle)
+	startSession(conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil, l.lifecycle)
 	return nil
 }

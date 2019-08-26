@@ -85,7 +85,6 @@ func NewDialer(ctx context.Context, opts *DialerOpts, lifecycle ClientLifecycleL
 		opts.PingInterval,
 		opts.Cipher)
 	liveSessions := make(chan sessionIntf, opts.MaxLiveConns)
-	//liveSessions <- nullSession{}
 	d := &dialer{
 		windowSize:            opts.WindowSize,
 		maxPadding:            opts.MaxPadding,
@@ -153,11 +152,11 @@ func (d *dialer) Dial(lifecycle ClientLifecycleListener, dial DialFN) (net.Conn,
 }
 
 func (d *dialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error) {
-	s, err := d.getSession(ctx, lifecycle, dial)
+	ctx, s, err := d.getSession(ctx, lifecycle, dial)
 	if err != nil {
 		return nil, err
 	}
-	c := s.CreateStream(lifecycle)
+	c := s.CreateStream(ctx, lifecycle)
 	d.returnSession(s)
 	return c, nil
 }
@@ -169,14 +168,15 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (sessionIntf, error) {
+func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (context.Context, sessionIntf, error) {
 	start := time.Now()
 	for {
 		select {
 		case s := <-d.liveSessions:
 			if s.AllowNewStream(d.maxStreamsPerConn) {
 				log.Debug("Stream allowed...")
-				return s, nil
+				sessionCtx := lifecycle.OnSessionInit(ctx)
+				return sessionCtx, s, nil
 			}
 			d.requiredSessions <- true
 			/*
@@ -200,7 +200,7 @@ func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListen
 			if elapsed < 2.0 {
 				lifecycle.OnSessionError(err, nil)
 			}
-			return nil, err
+			return ctx, nil, err
 		}
 	}
 }
@@ -229,15 +229,15 @@ func (d *dialer) BoundTo(lifecycle ClientLifecycleListener, dial DialFN) BoundDi
 }
 
 func (d *dialer) startSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (*session, error) {
-	ctx = lifecycle.OnSessionInit(ctx)
-	lifecycle.OnTCPStart(ctx)
+	//ctx = lifecycle.OnSessionInit(ctx)
+	//lifecycle.OnTCPStart(ctx)
 	start := time.Now()
 	conn, err := dial()
 	if err != nil {
-		lifecycle.OnTCPConnectionError(err)
+		//lifecycle.OnTCPConnectionError(err)
 		return nil, err
 	}
-	lifecycle.OnTCPEstablished(conn)
+	//lifecycle.OnTCPEstablished(conn)
 	log.Debugf("Successfully created new lampshade TCP connection in %v seconds", time.Since(start).Seconds())
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
@@ -250,7 +250,7 @@ func (d *dialer) startSession(ctx context.Context, lifecycle ClientLifecycleList
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg,
+	return startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg,
 		d.pool, d.emaRTT, nil, nil, lifecycle)
 }
 
