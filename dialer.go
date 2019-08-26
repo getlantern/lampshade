@@ -63,7 +63,7 @@ type DialerOpts struct {
 //
 // If a new physical connection is needed but can't be established, the dialer
 // returns the underlying dial error.
-func NewDialer(ctx context.Context, opts *DialerOpts, lifecycle ClientLifecycleListener, dial DialFN) Dialer {
+func NewDialer(opts *DialerOpts, lifecycle ClientLifecycleListener, dial DialFN) Dialer {
 	if opts.WindowSize <= 0 {
 		opts.WindowSize = defaultWindowSize
 	}
@@ -101,7 +101,6 @@ func NewDialer(ctx context.Context, opts *DialerOpts, lifecycle ClientLifecycleL
 		emaRTT:                ema.NewDuration(0, 0.5),
 		lifecycle:             lifecycle,
 		dial:                  dial,
-		ctx:                   ctx,
 		requiredSessions:      make(chan bool, 1),
 	}
 	d.requiredSessions <- true
@@ -128,14 +127,13 @@ type dialer struct {
 	emaRTT                *ema.EMA
 	lifecycle             ClientLifecycleListener
 	dial                  DialFN
-	ctx                   context.Context
 }
 
 func (d *dialer) maintainTCPConnection() (net.Conn, error) {
 	for {
 		select {
 		case <-d.requiredSessions:
-			s, err := d.startSession(d.ctx, d.lifecycle, d.dial)
+			s, err := d.startSession(d.lifecycle, d.dial)
 			if err != nil {
 				d.lifecycle.OnTCPConnectionError(err)
 				time.Sleep(2 * time.Second)
@@ -224,7 +222,7 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) startSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (*session, error) {
+func (d *dialer) startSession(lifecycle ClientLifecycleListener, dial DialFN) (*session, error) {
 	//ctx = lifecycle.OnSessionInit(ctx)
 	//lifecycle.OnTCPStart(ctx)
 	start := time.Now()

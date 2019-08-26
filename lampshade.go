@@ -309,18 +309,6 @@ type Dialer interface {
 	DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error)
 }
 
-// BoundDialer is a Dialer bound to a specific DialFN for connecting to the
-// lampshade server.
-type BoundDialer interface {
-	StatsTracking
-
-	// Dial creates a virtual connection to the lampshade server.
-	Dial(lifecycle ClientLifecycleListener) (net.Conn, error)
-
-	// DialContext is the same as Dial but with the specific context.
-	DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error)
-}
-
 // Session is a wrapper around a net.Conn that supports multiplexing.
 type Session interface {
 	net.Conn
