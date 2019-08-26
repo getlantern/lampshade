@@ -144,7 +144,7 @@ func (d *dialer) getNumLivePending() int {
 
 func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (sessionIntf, error) {
 	start := time.Now()
-	sessionContext := lifecycle.OnSessionInit(ctx)
+	ctx = lifecycle.OnSessionInit(ctx)
 	newSession := func(cap int) {
 		d.muNumLivePending.Lock()
 		if d.numLive+d.numPending >= cap {
@@ -154,7 +154,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle ClientLifecyc
 		d.numPending++
 		d.muNumLivePending.Unlock()
 		go func() {
-			s, err := d.startSession(sessionContext, lifecycle, dial)
+			s, err := d.startSession(ctx, lifecycle, dial)
 			d.muNumLivePending.Lock()
 			d.numPending--
 			if err != nil {
@@ -182,6 +182,7 @@ func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle ClientLifecyc
 			newSession(minLiveConns)
 		case <-time.After(d.redialSessionInterval):
 			log.Debugf("Calling newSession after redialSessionInterval")
+			lifecycle.OnRedialSessionInterval(ctx)
 			newSession(d.maxLiveConns)
 		case <-ctx.Done():
 			elapsed := time.Since(start).Seconds()

@@ -26,6 +26,7 @@ type ServerLifecycleListener interface {
 type ClientLifecycleListener interface {
 	LifecycleListener
 
+	OnRedialSessionInterval(context.Context)
 	OnTCPStart(context.Context)
 	OnTCPConnectionError(error)
 	OnTCPEstablished(net.Conn)
@@ -77,6 +78,7 @@ func (n *noopServerLifecycleListener) OnStreamInit(context.Context, uint16) Stre
 func (n *noopClientLifecycleListener) OnSessionInit(context.Context) context.Context {
 	return context.Background()
 }
+func (n *noopClientLifecycleListener) OnRedialSessionInterval(context.Context)      {}
 func (n *noopClientLifecycleListener) OnTCPStart(context.Context)                   {}
 func (n *noopClientLifecycleListener) OnTCPConnectionError(error)                   {}
 func (n *noopClientLifecycleListener) OnTCPEstablished(net.Conn)                    {}
