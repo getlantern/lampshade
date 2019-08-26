@@ -63,7 +63,7 @@ type DialerOpts struct {
 //
 // If a new physical connection is needed but can't be established, the dialer
 // returns the underlying dial error.
-func NewDialer(opts *DialerOpts) Dialer {
+func NewDialer(ctx context.Context, opts *DialerOpts, lifecycle ClientLifecycleListener, dial DialFN) Dialer {
 	if opts.WindowSize <= 0 {
 		opts.WindowSize = defaultWindowSize
 	}
@@ -85,8 +85,8 @@ func NewDialer(opts *DialerOpts) Dialer {
 		opts.PingInterval,
 		opts.Cipher)
 	liveSessions := make(chan sessionIntf, opts.MaxLiveConns)
-	liveSessions <- nullSession{}
-	return &dialer{
+	//liveSessions <- nullSession{}
+	d := &dialer{
 		windowSize:            opts.WindowSize,
 		maxPadding:            opts.MaxPadding,
 		maxStreamsPerConn:     opts.MaxStreamsPerConn,
@@ -100,7 +100,14 @@ func NewDialer(opts *DialerOpts) Dialer {
 		liveSessions:          liveSessions,
 		numLive:               1, // the nullSession
 		emaRTT:                ema.NewDuration(0, 0.5),
+		lifecycle:             lifecycle,
+		dial:                  dial,
+		ctx:                   ctx,
+		requiredSessions:      make(chan bool, 1),
 	}
+	d.requiredSessions <- true
+	go d.maintainTCPConnection()
+	return d
 }
 
 type dialer struct {
@@ -118,7 +125,27 @@ type dialer struct {
 	numLive               int
 	numPending            int
 	liveSessions          chan sessionIntf
+	requiredSessions      chan bool
 	emaRTT                *ema.EMA
+	lifecycle             ClientLifecycleListener
+	dial                  DialFN
+	ctx                   context.Context
+}
+
+func (d *dialer) maintainTCPConnection() (net.Conn, error) {
+	for {
+		select {
+		case <-d.requiredSessions:
+			s, err := d.startSession(d.ctx, d.lifecycle, d.dial)
+			if err != nil {
+				d.lifecycle.OnTCPConnectionError(err)
+				time.Sleep(2 * time.Second)
+				d.requiredSessions <- true
+			} else {
+				d.liveSessions <- s
+			}
+		}
+	}
 }
 
 func (d *dialer) Dial(lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error) {
@@ -126,7 +153,7 @@ func (d *dialer) Dial(lifecycle ClientLifecycleListener, dial DialFN) (net.Conn,
 }
 
 func (d *dialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (net.Conn, error) {
-	s, err := d.getOrCreateSession(ctx, lifecycle, dial)
+	s, err := d.getSession(ctx, lifecycle, dial)
 	if err != nil {
 		return nil, err
 	}
@@ -142,31 +169,8 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (sessionIntf, error) {
+func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (sessionIntf, error) {
 	start := time.Now()
-	ctx = lifecycle.OnSessionInit(ctx)
-	newSession := func(cap int) {
-		d.muNumLivePending.Lock()
-		if d.numLive+d.numPending >= cap {
-			d.muNumLivePending.Unlock()
-			return
-		}
-		d.numPending++
-		d.muNumLivePending.Unlock()
-		go func() {
-			s, err := d.startSession(ctx, lifecycle, dial)
-			d.muNumLivePending.Lock()
-			d.numPending--
-			if err != nil {
-				d.muNumLivePending.Unlock()
-				return
-			}
-			d.numLive++
-			d.muNumLivePending.Unlock()
-			log.Debug("Adding new real session...")
-			d.liveSessions <- s
-		}()
-	}
 	for {
 		select {
 		case s := <-d.liveSessions:
@@ -174,16 +178,22 @@ func (d *dialer) getOrCreateSession(ctx context.Context, lifecycle ClientLifecyc
 				log.Debug("Stream allowed...")
 				return s, nil
 			}
-			d.muNumLivePending.Lock()
-			d.numLive--
-			d.muNumLivePending.Unlock()
-			s.MarkDefunct()
-			log.Debugf("Calling newSession after not allowing new stream on session: %v", s.String())
-			newSession(minLiveConns)
-		case <-time.After(d.redialSessionInterval):
-			log.Debugf("Calling newSession after redialSessionInterval")
-			lifecycle.OnRedialSessionInterval(ctx)
-			newSession(d.maxLiveConns)
+			d.requiredSessions <- true
+			/*
+				d.muNumLivePending.Lock()
+				d.numLive--
+				d.muNumLivePending.Unlock()
+				s.MarkDefunct()
+				log.Debugf("Calling newSession after not allowing new stream on session: %v", s.String())
+				newSession(minLiveConns)
+			*/
+			/*
+				case <-time.After(d.redialSessionInterval):
+					log.Debugf("Calling newSession after redialSessionInterval")
+					lifecycle.OnRedialSessionInterval(ctx)
+					d.requiredSessions <- true
+					//newSession(d.maxLiveConns)
+			*/
 		case <-ctx.Done():
 			elapsed := time.Since(start).Seconds()
 			err := fmt.Errorf("No session available after %f", elapsed)
@@ -219,6 +229,7 @@ func (d *dialer) BoundTo(lifecycle ClientLifecycleListener, dial DialFN) BoundDi
 }
 
 func (d *dialer) startSession(ctx context.Context, lifecycle ClientLifecycleListener, dial DialFN) (*session, error) {
+	ctx = lifecycle.OnSessionInit(ctx)
 	lifecycle.OnTCPStart(ctx)
 	start := time.Now()
 	conn, err := dial()
@@ -239,7 +250,22 @@ func (d *dialer) startSession(ctx context.Context, lifecycle ClientLifecycleList
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, lifecycle)
+	return startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg,
+		d.pool, d.emaRTT, nil, nil, lifecycle)
+}
+
+func (d *dialer) dialerLifecycle(base ClientLifecycleListener) ClientLifecycleListener {
+	return &dialerLifecycleWrapper{base, d}
+}
+
+type dialerLifecycleWrapper struct {
+	ClientLifecycleListener
+	d *dialer
+}
+
+func (dlw *dialerLifecycleWrapper) OnTCPClosed() {
+	dlw.ClientLifecycleListener.OnTCPClosed()
+	dlw.d.requiredSessions <- true
 }
 
 type boundDialer struct {

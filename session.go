@@ -159,7 +159,8 @@ func (s *session) recvLoop() {
 	stoppedOnExpectedEOF := false
 
 	defer func() {
-		closeErr := s.Conn.Close()
+
+		closeErr := s.Close()
 		if closeErr != nil {
 			if stoppedOnExpectedEOF && strings.Contains(closeErr.Error(), idletiming.ErrIdled.Error()) {
 				// recvLoop stopped with an expected EOF caused by an idled connection.
@@ -376,6 +377,7 @@ func (s *session) send(frame []byte) (open bool) {
 	}
 	open = snd.send(frame)
 	if len(snd.closedStreams) > 0 {
+		log.Debug("Closing all streams")
 		s.mx.Lock()
 		for _, streamID := range snd.closedStreams {
 			s.closeStream(streamID)
@@ -521,8 +523,8 @@ func (snd *sender) coalesce(b []byte) {
 }
 
 func (s *session) onSessionError(readErr error, writeErr error) {
+	defer s.Close()
 	s.lifecycle.OnSessionError(readErr, writeErr)
-	s.Close()
 	s.mx.RLock()
 	streams := make([]*stream, 0, len(s.streams))
 	for _, c := range s.streams {
@@ -554,7 +556,6 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 		// considered no good at this point and we won't bother sending anything.
 		go c.close(false, readErr, writeErr)
 	}
-
 }
 
 func (s *session) CreateStream(lifecycle LifecycleListener) *stream {
@@ -607,6 +608,7 @@ func (s *session) MarkDefunct() {
 	s.mx.Lock()
 	s.defunct = true
 	if len(s.streams) == 0 {
+		log.Debug("No streams left -- closing")
 		s.Close()
 	}
 	s.mx.Unlock()
@@ -622,6 +624,7 @@ func (s *session) closeStream(id uint16) {
 	s.mx.Unlock()
 
 	if s.defunct && len(s.streams) == 0 {
+		log.Debug("Defunct and no streams left -- closing")
 		s.Close()
 	}
 }
@@ -640,7 +643,9 @@ func (s *session) Close() error {
 		atomic.AddInt64(&closingSessions, -1)
 		atomic.AddInt64(&openSessions, -1)
 		atomic.AddInt64(&closedSessions, 1)
-		err = nil
+		log.Debug("Closing lampshade TCP connection, establishing new...")
+		s.lifecycle.OnTCPClosed()
+		err = s.Conn.Close()
 	})
 	return err
 }
