@@ -30,7 +30,7 @@ type stream struct {
 
 func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16, lifecycle LifecycleListener) *stream {
 	atomic.AddInt64(&openStreams, 1)
-	return &stream{
+	st := &stream{
 		Conn:      s,
 		session:   s,
 		pool:      bp,
@@ -39,6 +39,8 @@ func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, wind
 		id:        id,
 		lifecycle: lifecycle.OnStreamInit(ctx, id),
 	}
+	log.Debug("newStream xx stream")
+	return st
 }
 
 func (c *stream) Read(b []byte) (int, error) {
