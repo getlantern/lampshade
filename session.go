@@ -131,6 +131,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
 		lifecycle:        lifecycle,
 	}
+	log.Debugf("Created session with max frame size of %v bytes", maxSessionFrameSize)
 
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
