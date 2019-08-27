@@ -278,9 +278,8 @@ func (s *session) recvLoop() {
 				// Closing existing connection
 				s.mx.Lock()
 				c := s.streams[id]
-				s.mx.Unlock()
-
 				s.closeStream(id)
+				s.mx.Unlock()
 
 				if c != nil {
 					// Close, but don't send an RST back the other way since the other end is
@@ -383,11 +382,11 @@ func (s *session) send(frame []byte) (open bool) {
 	open = snd.send(frame)
 	if len(snd.closedStreams) > 0 {
 		log.Debug("Closing all send streams")
-		snd.closedStreamM.Lock()
+		s.mx.Lock()
 		for _, streamID := range snd.closedStreams {
 			s.closeStream(streamID)
 		}
-		snd.closedStreamM.Unlock()
+		s.mx.Unlock()
 	}
 	return
 }
@@ -446,7 +445,6 @@ type sender struct {
 	coalesced      int
 	startOfData    int
 	closedStreams  []uint16
-	closedStreamM  sync.RWMutex
 }
 
 func (snd *sender) send(frame []byte) (open bool) {
@@ -507,9 +505,7 @@ func (snd *sender) bufferFrame(frame []byte) {
 	switch frameType {
 	case frameTypeRST:
 		// RST frames only contain the header
-		snd.closedStreamM.Lock()
 		snd.closedStreams = append(snd.closedStreams, streamID)
-		snd.closedStreamM.Unlock()
 		return
 	case frameTypeACK, frameTypePing, frameTypeEcho:
 		// ACK, ping and echo frames also have additional data
@@ -624,13 +620,11 @@ func (s *session) MarkDefunct() {
 }
 
 func (s *session) closeStream(id uint16) {
-	s.mx.Lock()
 	stream := s.streams[id]
 	if stream != nil {
 		s.closed[id] = stream
 	}
 	delete(s.streams, id)
-	s.mx.Unlock()
 
 	if s.defunct && len(s.streams) == 0 {
 		log.Debug("Defunct and no streams left -- closing")
