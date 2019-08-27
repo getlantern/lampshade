@@ -174,7 +174,9 @@ func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListen
 	for {
 		select {
 		case s := <-d.liveSessions:
+			log.Debug("Got live session")
 			d.liveSessions <- s
+			log.Debug("Returned live session")
 			if s.AllowNewStream(d.maxStreamsPerConn) {
 				log.Debug("Stream allowed...")
 				sessionCtx := lifecycle.OnSessionInit(ctx)
