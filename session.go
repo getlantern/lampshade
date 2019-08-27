@@ -570,6 +570,7 @@ func (s *session) getOrCreateStream(ctx context.Context, id uint16, lifecycle Li
 	c := s.streams[id]
 	if c != nil {
 		s.mx.Unlock()
+		log.Debug("Returning existing xx stream")
 		return c, true
 	}
 	closed := s.closed[id]
