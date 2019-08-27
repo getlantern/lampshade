@@ -157,7 +157,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	c := s.CreateStream(ctx, d.lifecycle)
-	d.liveSessions <- s
+
 	//d.returnSession(s)
 	return c, nil
 }
@@ -174,6 +174,7 @@ func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListen
 	for {
 		select {
 		case s := <-d.liveSessions:
+			d.liveSessions <- s
 			if s.AllowNewStream(d.maxStreamsPerConn) {
 				log.Debug("Stream allowed...")
 				sessionCtx := lifecycle.OnSessionInit(ctx)
