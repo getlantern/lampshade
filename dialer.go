@@ -133,6 +133,7 @@ func (d *dialer) maintainTCPConnection() (net.Conn, error) {
 	for {
 		select {
 		case <-d.requiredSessions:
+			log.Debug("Attempting to create new session")
 			start := time.Now()
 			s, err := d.startSession(d.lifecycle, d.dial)
 			if err != nil {
