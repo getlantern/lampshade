@@ -154,10 +154,12 @@ func (d *dialer) Dial() (net.Conn, error) {
 func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	ctx, s, err := d.getSession(ctx, d.lifecycle)
 	if err != nil {
+		log.Errorf("Error getting session for xx stream: %v", err)
 		return nil, err
 	}
+	log.Debug("Creating xx stream.")
 	c := s.CreateStream(ctx, d.lifecycle)
-	log.Debug("Returning stream.")
+	log.Debug("Returning xx stream.")
 	//d.returnSession(s)
 	return c, nil
 }
