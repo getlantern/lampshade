@@ -377,7 +377,7 @@ func (s *session) send(frame []byte) (open bool) {
 	}
 	open = snd.send(frame)
 	if len(snd.closedStreams) > 0 {
-		log.Debug("Closing all streams")
+		log.Debug("Closing all send streams")
 		s.mx.Lock()
 		for _, streamID := range snd.closedStreams {
 			s.closeStream(streamID)

@@ -133,12 +133,14 @@ func (d *dialer) maintainTCPConnection() (net.Conn, error) {
 	for {
 		select {
 		case <-d.requiredSessions:
+			start := time.Now()
 			s, err := d.startSession(d.lifecycle, d.dial)
 			if err != nil {
 				d.lifecycle.OnTCPConnectionError(err)
 				time.Sleep(2 * time.Second)
 				d.requiredSessions <- true
 			} else {
+				log.Debugf("Created session in %v", time.Since(start))
 				d.liveSessions <- s
 			}
 		}
@@ -155,7 +157,8 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	c := s.CreateStream(ctx, d.lifecycle)
-	d.returnSession(s)
+	d.liveSessions <- s
+	//d.returnSession(s)
 	return c, nil
 }
 
@@ -176,6 +179,9 @@ func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListen
 				sessionCtx := lifecycle.OnSessionInit(ctx)
 				return sessionCtx, s, nil
 			}
+
+			// If this session has maximized its streams (seems to rarely happen in practice), then trigger creating
+			// a new session.
 			d.requiredSessions <- true
 			/*
 				d.muNumLivePending.Lock()
