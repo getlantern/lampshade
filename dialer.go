@@ -157,7 +157,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	c := s.CreateStream(ctx, d.lifecycle)
-
+	log.Debug("Returning stream.")
 	//d.returnSession(s)
 	return c, nil
 }
