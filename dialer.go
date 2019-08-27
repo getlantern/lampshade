@@ -145,16 +145,16 @@ func (d *dialer) maintainTCPConnection() (net.Conn, error) {
 	}
 }
 
-func (d *dialer) Dial(lifecycle ClientLifecycleListener) (net.Conn, error) {
-	return d.DialContext(context.Background(), lifecycle)
+func (d *dialer) Dial() (net.Conn, error) {
+	return d.DialContext(context.Background())
 }
 
-func (d *dialer) DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error) {
-	ctx, s, err := d.getSession(ctx, lifecycle)
+func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
+	ctx, s, err := d.getSession(ctx, d.lifecycle)
 	if err != nil {
 		return nil, err
 	}
-	c := s.CreateStream(ctx, lifecycle)
+	c := s.CreateStream(ctx, d.lifecycle)
 	d.returnSession(s)
 	return c, nil
 }

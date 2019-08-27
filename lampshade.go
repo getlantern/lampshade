@@ -303,10 +303,10 @@ type Dialer interface {
 
 	// Dial creates a virtual connection to the lampshade server, using the given
 	// DialFN to open a physical connection when necessary.
-	Dial(lifecycle ClientLifecycleListener) (net.Conn, error)
+	Dial() (net.Conn, error)
 
 	// DialContext is the same as Dial but with the specific context.
-	DialContext(ctx context.Context, lifecycle ClientLifecycleListener) (net.Conn, error)
+	DialContext(ctx context.Context) (net.Conn, error)
 }
 
 // Session is a wrapper around a net.Conn that supports multiplexing.
