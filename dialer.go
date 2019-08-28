@@ -152,11 +152,13 @@ func (d *dialer) Dial() (net.Conn, error) {
 }
 
 func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
+	log.Debug("Dialing context xxl")
 	s, err := d.getSession(ctx)
 	if err != nil {
 		return nil, err
 	}
 	c := s.CreateStream()
+	log.Debug("Created stream xxl")
 	d.liveSessions <- s
 	return c, nil
 }
