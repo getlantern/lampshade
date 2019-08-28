@@ -49,7 +49,6 @@ func trackStats() {
 
 type sessionIntf interface {
 	AllowNewStream(maxStreamPerConn uint16) bool
-	MarkDefunct()
 	CreateStream() *stream
 }
 
@@ -75,7 +74,6 @@ type session struct {
 	echoOut          chan []byte
 	streams          map[uint16]*stream
 	closed           map[uint16]bool
-	defunct          bool
 	connCh           chan net.Conn
 	beforeClose      func(*session)
 	emaRTT           *ema.EMA
@@ -591,23 +589,9 @@ func (s *session) AllowNewStream(maxStreamPerConn uint16) bool {
 	return true
 }
 
-// MarkDefunct marks this session as defunct. A defunct session will close once
-// all streams are closed.
-func (s *session) MarkDefunct() {
-	s.mx.Lock()
-	s.defunct = true
-	if len(s.streams) == 0 {
-		s.Close()
-	}
-	s.mx.Unlock()
-}
-
 func (s *session) closeStream(id uint16) {
 	delete(s.streams, id)
 	s.closed[id] = true
-	if s.defunct && len(s.streams) == 0 {
-		s.Close()
-	}
 }
 
 var errorAlreadyClosed = errors.New("session already closed")
