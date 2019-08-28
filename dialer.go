@@ -3,7 +3,6 @@ package lampshade
 import (
 	"context"
 	"crypto/rsa"
-	"errors"
 	"fmt"
 	"net"
 	"sync"
@@ -53,6 +52,9 @@ type DialerOpts struct {
 
 	// ServerPublicKey - if provided, this dialer will use encryption.
 	ServerPublicKey *rsa.PublicKey
+
+	// Dial is the dial function to use for creating new TCP connections.
+	Dial DialFN
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -85,9 +87,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		opts.MaxStreamsPerConn,
 		opts.PingInterval,
 		opts.Cipher)
-	liveSessions := make(chan sessionIntf, opts.MaxLiveConns)
-	liveSessions <- nullSession{}
-	return &dialer{
+	d := &dialer{
 		windowSize:            opts.WindowSize,
 		maxPadding:            opts.MaxPadding,
 		maxStreamsPerConn:     opts.MaxStreamsPerConn,
@@ -95,13 +95,18 @@ func NewDialer(opts *DialerOpts) Dialer {
 		idleInterval:          opts.IdleInterval,
 		pingInterval:          opts.PingInterval,
 		redialSessionInterval: opts.RedialSessionInterval,
-		pool:            opts.Pool,
-		cipherCode:      opts.Cipher,
-		serverPublicKey: opts.ServerPublicKey,
-		liveSessions:    liveSessions,
-		numLive:         1, // the nullSession
-		emaRTT:          ema.NewDuration(0, 0.5),
+		pool:                  opts.Pool,
+		cipherCode:            opts.Cipher,
+		serverPublicKey:       opts.ServerPublicKey,
+		liveSessions:          make(chan sessionIntf, opts.MaxLiveConns),
+		numLive:               1, // the nullSession
+		emaRTT:                ema.NewDuration(0, 0.5),
+		dial:                  opts.Dial,
+		requiredSessions:      make(chan bool, 1),
 	}
+	d.requiredSessions <- true
+	go d.maintainTCPConnection()
+	return d
 }
 
 type dialer struct {
@@ -119,15 +124,35 @@ type dialer struct {
 	numLive               int
 	numPending            int
 	liveSessions          chan sessionIntf
+	requiredSessions      chan bool
 	emaRTT                *ema.EMA
+	dial                  DialFN
 }
 
-func (d *dialer) Dial(dial DialFN) (net.Conn, error) {
-	return d.DialContext(context.Background(), dial)
+func (d *dialer) maintainTCPConnection() (net.Conn, error) {
+	for {
+		select {
+		case <-d.requiredSessions:
+			log.Debug("Attempting to create new session")
+			start := time.Now()
+			s, err := d.startSession()
+			if err != nil {
+				time.Sleep(2 * time.Second)
+				d.requiredSessions <- true
+			} else {
+				log.Debugf("Created session in %v", time.Since(start))
+				d.liveSessions <- s
+			}
+		}
+	}
 }
 
-func (d *dialer) DialContext(ctx context.Context, dial DialFN) (net.Conn, error) {
-	s, err := d.getOrCreateSession(ctx, dial)
+func (d *dialer) Dial() (net.Conn, error) {
+	return d.DialContext(context.Background())
+}
+
+func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
+	s, err := d.getSession(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -143,43 +168,26 @@ func (d *dialer) getNumLivePending() int {
 	return numLivePending
 }
 
-func (d *dialer) getOrCreateSession(ctx context.Context, dial DialFN) (sessionIntf, error) {
-	newSession := func(cap int) {
-		d.muNumLivePending.Lock()
-		if d.numLive+d.numPending >= cap {
-			d.muNumLivePending.Unlock()
-			return
-		}
-		d.numPending++
-		d.muNumLivePending.Unlock()
-		go func() {
-			s, err := d.startSession(dial)
-			d.muNumLivePending.Lock()
-			d.numPending--
-			if err != nil {
-				d.muNumLivePending.Unlock()
-				return
-			}
-			d.numLive++
-			d.muNumLivePending.Unlock()
-			d.liveSessions <- s
-		}()
-	}
+func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
+	start := time.Now()
 	for {
 		select {
 		case s := <-d.liveSessions:
-			if s.AllowNewStream(d.maxStreamsPerConn, d.idleInterval) {
+			log.Debug("Got live session")
+			d.liveSessions <- s
+			log.Debug("Returned live session")
+			if s.AllowNewStream(d.maxStreamsPerConn) {
+				log.Debug("Stream allowed...")
 				return s, nil
 			}
-			d.muNumLivePending.Lock()
-			d.numLive--
-			d.muNumLivePending.Unlock()
-			s.MarkDefunct()
-			newSession(minLiveConns)
-		case <-time.After(d.redialSessionInterval):
-			newSession(d.maxLiveConns)
+
+			// If this session has maximized its streams (seems to rarely happen in practice), then trigger creating
+			// a new session.
+			d.requiredSessions <- true
 		case <-ctx.Done():
-			return nil, errors.New("No session available")
+			elapsed := time.Since(start).Seconds()
+			err := fmt.Errorf("No session available after %f seconds", elapsed)
+			return nil, err
 		}
 	}
 }
@@ -203,12 +211,8 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) BoundTo(dial DialFN) BoundDialer {
-	return &boundDialer{d, dial}
-}
-
-func (d *dialer) startSession(dial DialFN) (*session, error) {
-	conn, err := dial()
+func (d *dialer) startSession() (*session, error) {
+	conn, err := d.dial()
 	if err != nil {
 		return nil, err
 	}
@@ -225,18 +229,4 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 	}
 
 	return startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
-}
-
-type boundDialer struct {
-	Dialer
-
-	dial DialFN
-}
-
-func (bd *boundDialer) Dial() (net.Conn, error) {
-	return bd.Dialer.Dial(bd.dial)
-}
-
-func (bd *boundDialer) DialContext(ctx context.Context) (net.Conn, error) {
-	return bd.Dialer.DialContext(ctx, bd.dial)
 }

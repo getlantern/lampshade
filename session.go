@@ -48,17 +48,10 @@ func trackStats() {
 }
 
 type sessionIntf interface {
-	AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool
+	AllowNewStream(maxStreamPerConn uint16) bool
 	MarkDefunct()
 	CreateStream() *stream
 }
-type nullSession struct{}
-
-func (s nullSession) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
-	return false
-}
-func (s nullSession) MarkDefunct()          {}
-func (s nullSession) CreateStream() *stream { panic("should never be called") }
 
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
@@ -91,6 +84,7 @@ type session struct {
 	lastDialed       time.Time
 	nextID           uint32
 	mx               sync.RWMutex
+	requiredSessions chan bool
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -98,7 +92,8 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
+func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA,
+	connCh chan net.Conn, beforeClose func(*session), requiredSessions chan bool) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -120,6 +115,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
 		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
+		requiredSessions: requiredSessions,
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -151,6 +147,8 @@ func (s *session) recvLoop() {
 	stoppedOnExpectedEOF := false
 
 	defer func() {
+		log.Debug("Closing lampshade TCP connection")
+		s.requiredSessions <- true
 		closeErr := s.Conn.Close()
 		if closeErr != nil {
 			if stoppedOnExpectedEOF && strings.Contains(closeErr.Error(), idletiming.ErrIdled.Error()) {
@@ -582,18 +580,11 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 
 // AllowNewStream returns true if a new stream is allowed to be created over
 // this session, and false otherwise.
-func (s *session) AllowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
+func (s *session) AllowNewStream(maxStreamPerConn uint16) bool {
 	nextID := atomic.LoadUint32(&s.nextID)
 	if nextID > uint32(maxStreamPerConn) {
 		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
 		return false
-	}
-	if idleInterval > 0 {
-		now := time.Now()
-		if now.Sub(s.lastDialed) > idleInterval {
-			log.Debugf("No new connections in %v, will start new session", idleInterval)
-			return false
-		}
 	}
 	if s.isClosed() {
 		return false
