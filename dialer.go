@@ -129,6 +129,7 @@ type dialer struct {
 	dial                  DialFN
 }
 
+// maintainTCPConnection maintains background TCP connection(s) and associated lampshade session(s)
 func (d *dialer) maintainTCPConnection() (net.Conn, error) {
 	for {
 		select {
