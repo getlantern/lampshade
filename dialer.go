@@ -206,7 +206,7 @@ func (d *dialer) getSession(ctx context.Context, lifecycle ClientLifecycleListen
 			*/
 		case <-ctx.Done():
 			elapsed := time.Since(start).Seconds()
-			err := fmt.Errorf("No session available after %f", elapsed)
+			err := fmt.Errorf("No session available after %f seconds", elapsed)
 			if elapsed < 2.0 {
 				lifecycle.OnSessionError(err, nil)
 			}
