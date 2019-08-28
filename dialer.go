@@ -5,7 +5,6 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/getlantern/ema"
@@ -99,7 +98,6 @@ func NewDialer(opts *DialerOpts) Dialer {
 		cipherCode:            opts.Cipher,
 		serverPublicKey:       opts.ServerPublicKey,
 		liveSessions:          make(chan sessionIntf, opts.MaxLiveConns),
-		numLive:               1, // the nullSession
 		emaRTT:                ema.NewDuration(0, 0.5),
 		dial:                  opts.Dial,
 		requiredSessions:      make(chan bool, 1),
@@ -120,9 +118,6 @@ type dialer struct {
 	pool                  BufferPool
 	cipherCode            Cipher
 	serverPublicKey       *rsa.PublicKey
-	muNumLivePending      sync.Mutex
-	numLive               int
-	numPending            int
 	liveSessions          chan sessionIntf
 	requiredSessions      chan bool
 	emaRTT                *ema.EMA
@@ -160,13 +155,6 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	c := s.CreateStream()
 	d.liveSessions <- s
 	return c, nil
-}
-
-func (d *dialer) getNumLivePending() int {
-	d.muNumLivePending.Lock()
-	numLivePending := d.numLive + d.numPending
-	d.muNumLivePending.Unlock()
-	return numLivePending
 }
 
 func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
