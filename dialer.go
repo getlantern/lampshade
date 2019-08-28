@@ -99,7 +99,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		liveSessions:          make(chan sessionIntf, opts.LiveConns),
 		emaRTT:                ema.NewDuration(0, 0.5),
 		dial:                  opts.Dial,
-		requiredSessions:      make(chan bool, 1),
+		requiredSessions:      make(chan bool, opts.LiveConns),
 	}
 	for i := 0; i < opts.LiveConns; i++ {
 		d.requiredSessions <- true
