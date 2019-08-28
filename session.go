@@ -81,7 +81,6 @@ type session struct {
 	emaRTT           *ema.EMA
 	closeCh          chan struct{}
 	closeOnce        sync.Once
-	lastDialed       time.Time
 	nextID           uint32
 	mx               sync.RWMutex
 	requiredSessions chan bool
@@ -114,7 +113,6 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
-		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
 		requiredSessions: requiredSessions,
 	}
 	var err error
@@ -554,7 +552,6 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 func (s *session) CreateStream() *stream {
 	nextID := atomic.AddUint32(&s.nextID, 1)
 	stream, _ := s.getOrCreateStream(uint16(nextID - 1))
-	s.lastDialed = time.Now()
 	return stream
 }
 
