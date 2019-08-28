@@ -261,7 +261,8 @@ var (
 	log = golog.LoggerFor("lampshade")
 
 	// ErrTimeout indicates that an i/o operation timed out.
-	ErrTimeout = &netError{"i/o timeout", true, true}
+	ErrTimeout = &netError{"lampshade i/o timeout", true, true}
+
 	// ErrConnectionClosed indicates that an i/o operation was attempted on a
 	// closed stream.
 	ErrConnectionClosed = &netError{"connection closed", false, false}
