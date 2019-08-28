@@ -157,7 +157,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	c := s.CreateStream()
-	d.returnSession(s)
+	d.liveSessions <- s
 	return c, nil
 }
 
@@ -174,8 +174,6 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 		select {
 		case s := <-d.liveSessions:
 			log.Debug("Got live session")
-			d.liveSessions <- s
-			log.Debug("Returned live session")
 			if s.AllowNewStream(d.maxStreamsPerConn) {
 				log.Debug("Stream allowed...")
 				return s, nil
@@ -189,21 +187,6 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 			err := fmt.Errorf("No session available after %f seconds", elapsed)
 			return nil, err
 		}
-	}
-}
-
-func (d *dialer) returnSession(s sessionIntf) {
-	addBack := true
-	d.muNumLivePending.Lock()
-	if d.numLive > minLiveConns {
-		d.numLive--
-		addBack = false
-	}
-	d.muNumLivePending.Unlock()
-	if addBack {
-		d.liveSessions <- s
-	} else {
-		s.MarkDefunct()
 	}
 }
 
