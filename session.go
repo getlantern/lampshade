@@ -148,7 +148,9 @@ func (s *session) recvLoop() {
 
 	defer func() {
 		log.Debug("Closing lampshade TCP connection")
-		s.requiredSessions <- true
+		if s.requiredSessions != nil {
+			s.requiredSessions <- true
+		}
 		closeErr := s.Conn.Close()
 		if closeErr != nil {
 			if stoppedOnExpectedEOF && strings.Contains(closeErr.Error(), idletiming.ErrIdled.Error()) {

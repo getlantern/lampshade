@@ -228,5 +228,5 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil)
+	return startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.requiredSessions)
 }
