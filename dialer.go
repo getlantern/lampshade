@@ -133,10 +133,10 @@ func (d *dialer) maintainTCPConnection() (net.Conn, error) {
 	for {
 		select {
 		case <-d.requiredSessions:
-			log.Debug("Attempting to create new session")
 			start := time.Now()
 			s, err := d.startSession()
 			if err != nil {
+				log.Debugf("Error starting session: %v", err.Error())
 				time.Sleep(2 * time.Second)
 				d.requiredSessions <- true
 			} else {
@@ -152,13 +152,11 @@ func (d *dialer) Dial() (net.Conn, error) {
 }
 
 func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
-	log.Debug("Dialing context xxl")
 	s, err := d.getSession(ctx)
 	if err != nil {
 		return nil, err
 	}
 	c := s.CreateStream()
-	log.Debug("Created stream xxl")
 	d.liveSessions <- s
 	return c, nil
 }
@@ -175,9 +173,7 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 	for {
 		select {
 		case s := <-d.liveSessions:
-			log.Debug("Got live session")
 			if s.AllowNewStream(d.maxStreamsPerConn) {
-				log.Debug("Stream allowed...")
 				return s, nil
 			}
 
