@@ -101,7 +101,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		dial:                  opts.Dial,
 		requiredSessions:      make(chan bool, 1),
 	}
-	for i := 1; i < opts.LiveConns; i++ {
+	for i := 0; i < opts.LiveConns; i++ {
 		d.requiredSessions <- true
 	}
 
