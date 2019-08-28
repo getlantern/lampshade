@@ -22,9 +22,9 @@ type DialerOpts struct {
 	// MaxPadding - maximum random padding to use when necessary.
 	MaxPadding int
 
-	// MaxLiveConns - limits the number of live physical connections on which
-	// new streams can be created. If <=0, defaults to 1.
-	MaxLiveConns int
+	// LiveConns is the number of live connections to maintain to the server.
+	// Defaults to 2.
+	LiveConns int
 
 	// MaxStreamsPerConn - limits the number of streams per physical connection.
 	//                     If <=0, defaults to max uint16.
@@ -69,8 +69,8 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.WindowSize <= 0 {
 		opts.WindowSize = defaultWindowSize
 	}
-	if opts.MaxLiveConns <= 0 {
-		opts.MaxLiveConns = 1
+	if opts.LiveConns <= 0 {
+		opts.LiveConns = 2
 	}
 	if opts.MaxStreamsPerConn <= 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
@@ -82,7 +82,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxLiveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
 		opts.WindowSize,
 		opts.MaxPadding,
-		opts.MaxLiveConns,
+		opts.LiveConns,
 		opts.MaxStreamsPerConn,
 		opts.PingInterval,
 		opts.Cipher)
@@ -90,27 +90,28 @@ func NewDialer(opts *DialerOpts) Dialer {
 		windowSize:            opts.WindowSize,
 		maxPadding:            opts.MaxPadding,
 		maxStreamsPerConn:     opts.MaxStreamsPerConn,
-		maxLiveConns:          opts.MaxLiveConns,
 		idleInterval:          opts.IdleInterval,
 		pingInterval:          opts.PingInterval,
 		redialSessionInterval: opts.RedialSessionInterval,
 		pool:                  opts.Pool,
 		cipherCode:            opts.Cipher,
 		serverPublicKey:       opts.ServerPublicKey,
-		liveSessions:          make(chan sessionIntf, opts.MaxLiveConns),
+		liveSessions:          make(chan sessionIntf, opts.LiveConns),
 		emaRTT:                ema.NewDuration(0, 0.5),
 		dial:                  opts.Dial,
 		requiredSessions:      make(chan bool, 1),
 	}
-	d.requiredSessions <- true
-	go d.maintainTCPConnection()
+	for i := 1; i < opts.LiveConns; i++ {
+		d.requiredSessions <- true
+	}
+
+	go d.maintainTCPConnections()
 	return d
 }
 
 type dialer struct {
 	windowSize            int
 	maxPadding            int
-	maxLiveConns          int
 	maxStreamsPerConn     uint16
 	idleInterval          time.Duration
 	pingInterval          time.Duration
@@ -124,8 +125,8 @@ type dialer struct {
 	dial                  DialFN
 }
 
-// maintainTCPConnection maintains background TCP connection(s) and associated lampshade session(s)
-func (d *dialer) maintainTCPConnection() (net.Conn, error) {
+// maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
+func (d *dialer) maintainTCPConnections() (net.Conn, error) {
 	for {
 		select {
 		case <-d.requiredSessions:
