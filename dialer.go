@@ -54,6 +54,8 @@ type DialerOpts struct {
 
 	// Dial is the dial function to use for creating new TCP connections.
 	Dial DialFN
+
+	Lifecycle ClientLifecycleListener
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -100,6 +102,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		emaRTT:                ema.NewDuration(0, 0.5),
 		dial:                  opts.Dial,
 		requiredSessions:      make(chan bool, opts.LiveConns),
+		lifecyle:              opts.Lifecycle,
 	}
 	for i := 0; i < opts.LiveConns; i++ {
 		d.requiredSessions <- true
@@ -123,6 +126,7 @@ type dialer struct {
 	requiredSessions      chan bool
 	emaRTT                *ema.EMA
 	dial                  DialFN
+	lifecyle              ClientLifecycleListener
 }
 
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
@@ -183,10 +187,14 @@ func (d *dialer) EMARTT() time.Duration {
 }
 
 func (d *dialer) startSession() (*session, error) {
+	ctx := context.Background()
+	d.lifecyle.OnTCPStart(ctx)
 	conn, err := d.dial()
 	if err != nil {
+		d.lifecyle.OnTCPConnectionError(err)
 		return nil, err
 	}
+	d.lifecyle.OnTCPEstablished(conn)
 
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
@@ -199,5 +207,12 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	return startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.requiredSessions)
+	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.requiredSessions)
+
+	if err != nil {
+		d.lifecyle.OnSessionError(err, err)
+	} else {
+		d.lifecyle.OnSessionInit(ctx)
+	}
+	return s, err
 }
