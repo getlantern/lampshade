@@ -27,6 +27,7 @@ type ServerLifecycleListener interface {
 type ClientLifecycleListener interface {
 	LifecycleListener
 
+	OnStart(context.Context) context.Context
 	OnTCPStart(context.Context) context.Context
 	OnTCPConnectionError(context.Context, error) context.Context
 	OnTCPEstablished(context.Context, net.Conn) context.Context
@@ -83,6 +84,7 @@ func (n *noopServerLifecycleListener) OnReadClientInitError(string)     {}
 func (n *noopServerLifecycleListener) OnDecodeClientInitError(string)   {}
 func (n *noopServerLifecycleListener) OnClientInitRead(context.Context) {}
 
+func (n *noopClientLifecycleListener) OnStart(ctx context.Context) context.Context    { return ctx }
 func (n *noopClientLifecycleListener) OnTCPStart(ctx context.Context) context.Context { return ctx }
 func (n *noopClientLifecycleListener) OnTCPConnectionError(ctx context.Context, err error) context.Context {
 	return ctx

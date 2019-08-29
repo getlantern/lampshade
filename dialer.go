@@ -56,6 +56,8 @@ type DialerOpts struct {
 	Dial DialFN
 
 	Lifecycle ClientLifecycleListener
+
+	Context context.Context
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -103,7 +105,9 @@ func NewDialer(opts *DialerOpts) Dialer {
 		dial:                  opts.Dial,
 		requiredSessions:      make(chan bool, opts.LiveConns),
 		lifecyle:              opts.Lifecycle,
+		ctx:                   opts.Context,
 	}
+	d.lifecyle.OnStart(d.ctx)
 	for i := 0; i < opts.LiveConns; i++ {
 		d.requiredSessions <- true
 	}
@@ -127,6 +131,7 @@ type dialer struct {
 	emaRTT                *ema.EMA
 	dial                  DialFN
 	lifecyle              ClientLifecycleListener
+	ctx                   context.Context
 }
 
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
@@ -187,8 +192,7 @@ func (d *dialer) EMARTT() time.Duration {
 }
 
 func (d *dialer) startSession() (*session, error) {
-	ctx := context.Background()
-	ctx = d.lifecyle.OnTCPStart(ctx)
+	ctx := d.lifecyle.OnTCPStart(d.ctx)
 	conn, err := d.dial()
 	if err != nil {
 		d.lifecyle.OnTCPConnectionError(ctx, err)
