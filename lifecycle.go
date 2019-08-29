@@ -9,7 +9,7 @@ import (
 type LifecycleListener interface {
 	OnSessionInit(context.Context) context.Context
 	OnSessionError(context.Context, error, error) context.Context
-	OnStreamInit(context.Context, uint16) StreamLifecycleListener
+	OnStreamInit(context.Context, context.Context, uint16) StreamLifecycleListener
 	OnTCPClosed(context.Context) context.Context
 }
 
@@ -71,7 +71,7 @@ type noopStreamLifecycleListener struct{}
 func (n *noopLifecycleListener) OnSessionInit(context.Context) context.Context {
 	return context.Background()
 }
-func (n *noopLifecycleListener) OnStreamInit(context.Context, uint16) StreamLifecycleListener {
+func (n *noopLifecycleListener) OnStreamInit(context.Context, context.Context, uint16) StreamLifecycleListener {
 	return NoopStreamLifecycleListener()
 }
 func (n *noopLifecycleListener) OnSessionError(ctx context.Context, err1 error, err2 error) context.Context {
