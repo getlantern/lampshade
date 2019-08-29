@@ -105,9 +105,8 @@ func NewDialer(opts *DialerOpts) Dialer {
 		dial:                  opts.Dial,
 		requiredSessions:      make(chan bool, opts.LiveConns),
 		lifecyle:              opts.Lifecycle,
-		ctx:                   opts.Context,
 	}
-	d.lifecyle.OnStart(d.ctx)
+	d.ctx = d.lifecyle.OnStart(opts.Context)
 	for i := 0; i < opts.LiveConns; i++ {
 		d.requiredSessions <- true
 	}
