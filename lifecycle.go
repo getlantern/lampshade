@@ -8,9 +8,9 @@ import (
 // LifecycleListener allows lampshade users to listen to lampshade lifecycle events.
 type LifecycleListener interface {
 	OnSessionInit(context.Context) context.Context
-	OnSessionError(readErr error, writeErr error)
+	OnSessionError(context.Context, error, error) context.Context
 	OnStreamInit(context.Context, uint16) StreamLifecycleListener
-	OnTCPClosed()
+	OnTCPClosed(context.Context) context.Context
 }
 
 // ServerLifecycleListener allows lampshade clients to listen to lampshade lifecycle events.
@@ -27,10 +27,10 @@ type ServerLifecycleListener interface {
 type ClientLifecycleListener interface {
 	LifecycleListener
 
-	OnTCPStart(context.Context)
-	OnTCPConnectionError(error)
-	OnTCPEstablished(net.Conn)
-	OnClientInitWritten(context.Context)
+	OnTCPStart(context.Context) context.Context
+	OnTCPConnectionError(context.Context, error) context.Context
+	OnTCPEstablished(context.Context, net.Conn) context.Context
+	OnClientInitWritten(context.Context) context.Context
 }
 
 // StreamLifecycleListener allows lampshade users to listen to lampshade lifecycle events for a single stream.
@@ -73,19 +73,26 @@ func (n *noopLifecycleListener) OnSessionInit(context.Context) context.Context {
 func (n *noopLifecycleListener) OnStreamInit(context.Context, uint16) StreamLifecycleListener {
 	return NoopStreamLifecycleListener()
 }
-func (n *noopLifecycleListener) OnSessionError(readErr error, writeErr error) {}
-func (n *noopLifecycleListener) OnTCPClosed()                                 {}
+func (n *noopLifecycleListener) OnSessionError(ctx context.Context, err1 error, err2 error) context.Context {
+	return ctx
+}
+func (n *noopLifecycleListener) OnTCPClosed(ctx context.Context) context.Context { return ctx }
 
 func (n *noopServerLifecycleListener) OnTCPConnReceived(net.Conn)       {}
 func (n *noopServerLifecycleListener) OnReadClientInitError(string)     {}
 func (n *noopServerLifecycleListener) OnDecodeClientInitError(string)   {}
 func (n *noopServerLifecycleListener) OnClientInitRead(context.Context) {}
 
-func (n *noopClientLifecycleListener) OnRedialSessionInterval(context.Context) {}
-func (n *noopClientLifecycleListener) OnTCPStart(context.Context)              {}
-func (n *noopClientLifecycleListener) OnTCPConnectionError(error)              {}
-func (n *noopClientLifecycleListener) OnTCPEstablished(net.Conn)               {}
-func (n *noopClientLifecycleListener) OnClientInitWritten(context.Context)     {}
+func (n *noopClientLifecycleListener) OnTCPStart(ctx context.Context) context.Context { return ctx }
+func (n *noopClientLifecycleListener) OnTCPConnectionError(ctx context.Context, err error) context.Context {
+	return ctx
+}
+func (n *noopClientLifecycleListener) OnTCPEstablished(ctx context.Context, conn net.Conn) context.Context {
+	return ctx
+}
+func (n *noopClientLifecycleListener) OnClientInitWritten(ctx context.Context) context.Context {
+	return ctx
+}
 
 func (n *noopStreamLifecycleListener) OnStreamWrite(int) {}
 func (n *noopStreamLifecycleListener) OnStreamRead(int)  {}

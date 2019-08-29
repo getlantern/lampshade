@@ -188,13 +188,13 @@ func (d *dialer) EMARTT() time.Duration {
 
 func (d *dialer) startSession() (*session, error) {
 	ctx := context.Background()
-	d.lifecyle.OnTCPStart(ctx)
+	ctx = d.lifecyle.OnTCPStart(ctx)
 	conn, err := d.dial()
 	if err != nil {
-		d.lifecyle.OnTCPConnectionError(err)
+		d.lifecyle.OnTCPConnectionError(ctx, err)
 		return nil, err
 	}
-	d.lifecyle.OnTCPEstablished(conn)
+	ctx = d.lifecyle.OnTCPEstablished(ctx, conn)
 
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
@@ -210,9 +210,9 @@ func (d *dialer) startSession() (*session, error) {
 	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.requiredSessions)
 
 	if err != nil {
-		d.lifecyle.OnSessionError(err, err)
+		ctx = d.lifecyle.OnSessionError(ctx, err, err)
 	} else {
-		d.lifecyle.OnSessionInit(ctx)
+		ctx = d.lifecyle.OnSessionInit(ctx)
 	}
 	return s, err
 }
