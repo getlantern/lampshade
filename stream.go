@@ -45,7 +45,9 @@ func (c *stream) Read(b []byte) (int, error) {
 	if finalReadErr != nil {
 		return 0, finalReadErr
 	}
-	return c.rb.read(b, readDeadline)
+	r, err := c.rb.read(b, readDeadline)
+	c.lifecycle.OnStreamRead(r)
+	return r, err
 }
 
 func (c *stream) Write(b []byte) (int, error) {
@@ -66,7 +68,9 @@ func (c *stream) Write(b []byte) (int, error) {
 	_b := b
 	b = c.pool.getForFrame()[:len(b)]
 	copy(b, _b)
-	return c.sb.send(b, writeDeadline)
+	w, err := c.sb.send(b, writeDeadline)
+	c.lifecycle.OnStreamWrite(w)
+	return w, err
 }
 
 // writeChunks breaks the buffer down into units smaller than MaxDataLen in size
