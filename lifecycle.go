@@ -36,9 +36,9 @@ type ClientLifecycleListener interface {
 
 // StreamLifecycleListener allows lampshade users to listen to lampshade lifecycle events for a single stream.
 type StreamLifecycleListener interface {
-	OnStreamWrite(int)
-	OnStreamRead(int)
-	OnStreamClose()
+	OnStreamWrite(int) context.Context
+	OnStreamRead(int) context.Context
+	OnStreamClose() context.Context
 }
 
 // NoopServerLifecycleListener allows callers to use a noop listener.
@@ -96,6 +96,10 @@ func (n *noopClientLifecycleListener) OnClientInitWritten(ctx context.Context) c
 	return ctx
 }
 
-func (n *noopStreamLifecycleListener) OnStreamWrite(int) {}
-func (n *noopStreamLifecycleListener) OnStreamRead(int)  {}
-func (n *noopStreamLifecycleListener) OnStreamClose()    {}
+func (n *noopStreamLifecycleListener) OnStreamWrite(num int) context.Context {
+	return context.Background()
+}
+func (n *noopStreamLifecycleListener) OnStreamRead(num int) context.Context {
+	return context.Background()
+}
+func (n *noopStreamLifecycleListener) OnStreamClose() context.Context { return context.Background() }

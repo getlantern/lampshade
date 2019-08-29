@@ -22,16 +22,18 @@ type stream struct {
 	finalReadErr  error
 	finalWriteErr error
 	mx            sync.RWMutex
+	lifecycle     StreamLifecycleListener
 }
 
-func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte) *stream {
+func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16) *stream {
 	atomic.AddInt64(&openStreams, 1)
 	return &stream{
-		Conn:    s,
-		session: s,
-		pool:    bp,
-		sb:      newSendBuffer(defaultHeader, w, windowSize),
-		rb:      newReceiveBuffer(defaultHeader, w, bp, windowSize),
+		Conn:      s,
+		session:   s,
+		pool:      bp,
+		sb:        newSendBuffer(defaultHeader, w, windowSize),
+		rb:        newReceiveBuffer(defaultHeader, w, bp, windowSize),
+		lifecycle: s.lifecycle.OnStreamInit(s.ctx, id),
 	}
 }
 
@@ -97,6 +99,7 @@ func (c *stream) Close() error {
 func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 	c.mx.Lock()
 	if !c.closed {
+		c.lifecycle.OnStreamClose()
 		atomic.AddInt64(&closingStreams, 1)
 		c.closed = true
 		c.finalReadErr = readErr
