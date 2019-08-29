@@ -2,6 +2,7 @@ package lampshade
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"errors"
 	"fmt"
@@ -82,6 +83,8 @@ type session struct {
 	nextID           uint32
 	mx               sync.RWMutex
 	requiredSessions chan bool
+	lifecycle        ClientLifecycleListener
+	ctx              context.Context
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -89,8 +92,8 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA,
-	connCh chan net.Conn, beforeClose func(*session), requiredSessions chan bool) (*session, error) {
+func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA,
+	connCh chan net.Conn, beforeClose func(*session), requiredSessions chan bool, lifecycle ClientLifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -112,6 +115,8 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
 		requiredSessions: requiredSessions,
+		lifecycle:        lifecycle,
+		ctx:              ctx,
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -148,6 +153,9 @@ func (s *session) recvLoop() {
 			s.requiredSessions <- true
 		}
 		closeErr := s.Conn.Close()
+		if s.lifecycle != nil {
+			s.lifecycle.OnTCPClosed(s.ctx)
+		}
 		if closeErr != nil {
 			if stoppedOnExpectedEOF && strings.Contains(closeErr.Error(), idletiming.ErrIdled.Error()) {
 				// recvLoop stopped with an expected EOF caused by an idled connection.

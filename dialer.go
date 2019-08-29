@@ -210,7 +210,7 @@ func (d *dialer) startSession() (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.requiredSessions)
+	s, err := startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.requiredSessions, d.lifecyle)
 
 	if err != nil {
 		ctx = d.lifecyle.OnSessionError(ctx, err, err)
