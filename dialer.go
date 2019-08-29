@@ -161,7 +161,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := s.CreateStream()
+	c := s.CreateStream(ctx)
 	d.liveSessions <- s
 	return c, nil
 }

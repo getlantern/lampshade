@@ -50,7 +50,7 @@ func trackStats() {
 
 type sessionIntf interface {
 	AllowNewStream(maxStreamPerConn uint16) bool
-	CreateStream() *stream
+	CreateStream(context.Context) *stream
 }
 
 // session encapsulates the multiplexing of streams onto a single "physical"
@@ -253,7 +253,7 @@ func (s *session) recvLoop() {
 				// Padding is always at the end of a session frame, so stop processing
 				break frameLoop
 			case frameTypeACK:
-				c, open := s.getOrCreateStream(id)
+				c, open := s.getOrCreateStream(s.ctx, id)
 				if !open {
 					// Stream was already closed, ignore
 					continue
@@ -316,7 +316,7 @@ func (s *session) recvLoop() {
 				return
 			}
 
-			c, open := s.getOrCreateStream(id)
+			c, open := s.getOrCreateStream(s.ctx, id)
 			if !open {
 				if !alreadyLoggedReceiveForClosedStream[id] {
 					log.Debugf("Received data for closed stream %d", id)
@@ -555,13 +555,13 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 
 }
 
-func (s *session) CreateStream() *stream {
+func (s *session) CreateStream(ctx context.Context) *stream {
 	nextID := atomic.AddUint32(&s.nextID, 1)
-	stream, _ := s.getOrCreateStream(uint16(nextID - 1))
+	stream, _ := s.getOrCreateStream(ctx, uint16(nextID-1))
 	return stream
 }
 
-func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
+func (s *session) getOrCreateStream(ctx context.Context, id uint16) (*stream, bool) {
 	s.mx.Lock()
 	c := s.streams[id]
 	if c != nil {
@@ -574,7 +574,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	c = newStream(s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id)
+	c = newStream(ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id)
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {

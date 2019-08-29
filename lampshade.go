@@ -421,3 +421,16 @@ func echo() []byte {
 	echo[tsSize] = frameTypeEcho
 	return echo
 }
+
+type combinedContext struct {
+	context.Context
+	alt context.Context
+}
+
+func (cc *combinedContext) Value(key interface{}) interface{} {
+	v := cc.Context.Value(key)
+	if v != nil {
+		return v
+	}
+	return cc.alt.Value(key)
+}

@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"context"
 	"io"
 	"net"
 	"sync"
@@ -25,15 +26,16 @@ type stream struct {
 	lifecycle     StreamLifecycleListener
 }
 
-func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16) *stream {
+func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16) *stream {
 	atomic.AddInt64(&openStreams, 1)
+	ctx = &combinedContext{s.ctx, ctx}
 	return &stream{
 		Conn:      s,
 		session:   s,
 		pool:      bp,
 		sb:        newSendBuffer(defaultHeader, w, windowSize),
 		rb:        newReceiveBuffer(defaultHeader, w, bp, windowSize),
-		lifecycle: s.lifecycle.OnStreamInit(s.ctx, id),
+		lifecycle: s.lifecycle.OnStreamInit(ctx, id),
 	}
 }
 
