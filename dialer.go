@@ -115,8 +115,8 @@ func NewDialer(opts *DialerOpts) Dialer {
 	}
 	d.requiredSessions <- &requiredSession{
 		name:         "liveness",
-		dialTimeout:  1 * time.Millisecond,
-		sleepOnError: 5 * time.Second,
+		dialTimeout:  5 * time.Second,
+		sleepOnError: 1 * time.Second,
 	}
 	go d.maintainTCPConnections()
 	return d
