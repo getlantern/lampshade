@@ -298,7 +298,7 @@ type StatsTracking interface {
 }
 
 // DialFN is a function that dials the server
-type DialFN func() (net.Conn, error)
+type DialFN func(time.Duration) (net.Conn, error)
 
 // Dialer provides an interface for opening new lampshade connections.
 type Dialer interface {

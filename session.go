@@ -82,8 +82,8 @@ type session struct {
 	closeOnce        sync.Once
 	nextID           uint32
 	mx               sync.RWMutex
-	requiredSessions chan *requiredSession
-	requiredSession  *requiredSession
+	requiredSessions chan *pendingSession
+	requiredSession  *pendingSession
 	lifecycle        ClientLifecycleListener
 	ctx              context.Context
 }
@@ -95,7 +95,7 @@ type session struct {
 // with the first frame sent in this session.
 func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
 	cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session),
-	requiredSessions chan *requiredSession, rs *requiredSession, lifecycle ClientLifecycleListener) (*session, error) {
+	requiredSessions chan *pendingSession, rs *pendingSession, lifecycle ClientLifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,

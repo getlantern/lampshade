@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/getlantern/ema"
-	"github.com/getlantern/netx"
 )
 
 const defaultDialTimeout = 40
@@ -57,8 +56,6 @@ type DialerOpts struct {
 	Lifecycle ClientLifecycleListener
 
 	Context context.Context
-
-	Addr string
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -101,19 +98,21 @@ func NewDialer(opts *DialerOpts) Dialer {
 		pool:                  opts.Pool,
 		cipherCode:            opts.Cipher,
 		serverPublicKey:       opts.ServerPublicKey,
-		liveSessions:          make(chan sessionIntf, opts.LiveConns+1),
+		liveSessions:          make(chan sessionIntf, opts.LiveConns),
 		emaRTT:                ema.NewDuration(0, 0.5),
-		//dial:                  opts.Dial,
-		requiredSessions:   make(chan *requiredSession, opts.LiveConns+1),
-		lifecyle:           opts.Lifecycle,
-		defaultDialTimeout: 40,
-		addr:               opts.Addr,
+		dial:                  opts.Dial,
+		pendingSessions:       make(chan *pendingSession, opts.LiveConns),
+		lifecyle:              opts.Lifecycle,
+		defaultDialTimeout:    40,
 	}
 	d.ctx = d.lifecyle.OnStart(opts.Context)
-	for i := 0; i < opts.LiveConns; i++ {
-		d.requiredSessions <- newRequiredSession()
+	for i := 0; i < opts.LiveConns-1; i++ {
+		d.pendingSessions <- newPendingSession()
 	}
-	d.requiredSessions <- &requiredSession{
+
+	// We create another background session with a shorter dial timeout to ensure liveness in the case of network
+	// disruptions.
+	d.pendingSessions <- &pendingSession{
 		name:         "liveness",
 		dialTimeout:  5 * time.Second,
 		sleepOnError: 1 * time.Second,
@@ -133,7 +132,7 @@ type dialer struct {
 	cipherCode            Cipher
 	serverPublicKey       *rsa.PublicKey
 	liveSessions          chan sessionIntf
-	requiredSessions      chan *requiredSession
+	pendingSessions       chan *pendingSession
 	emaRTT                *ema.EMA
 	dial                  DialFN
 	lifecyle              ClientLifecycleListener
@@ -142,14 +141,14 @@ type dialer struct {
 	addr                  string
 }
 
-type requiredSession struct {
+type pendingSession struct {
 	name         string
 	dialTimeout  time.Duration
 	sleepOnError time.Duration
 }
 
-func newRequiredSession() *requiredSession {
-	return &requiredSession{
+func newPendingSession() *pendingSession {
+	return &pendingSession{
 		name:         "background",
 		dialTimeout:  time.Duration(defaultDialTimeout) * time.Second,
 		sleepOnError: 2 * time.Second,
@@ -160,13 +159,13 @@ func newRequiredSession() *requiredSession {
 func (d *dialer) maintainTCPConnections() (net.Conn, error) {
 	for {
 		select {
-		case rs := <-d.requiredSessions:
+		case rs := <-d.pendingSessions:
 			start := time.Now()
 			s, err := d.startSession(rs)
 			if err != nil {
 				log.Debugf("Error starting session '%v': %v", rs.name, err.Error())
 				time.Sleep(rs.sleepOnError)
-				d.requiredSessions <- rs
+				d.pendingSessions <- rs
 			} else {
 				log.Debugf("Created session in %v", time.Since(start))
 				d.liveSessions <- s
@@ -209,7 +208,7 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 			// If this session has maximized its streams (again highly unlikely in practice), then trigger creating
 			// a new session if we haven't reached the maximum number of sessions.
 			select {
-			case d.requiredSessions <- newRequiredSession():
+			case d.pendingSessions <- newPendingSession():
 				log.Debug("Added required session")
 			default:
 				log.Debug("Maximum sessions reached")
@@ -227,10 +226,10 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) startSession(rs *requiredSession) (*session, error) {
+func (d *dialer) startSession(rs *pendingSession) (*session, error) {
 	ctx := d.lifecyle.OnTCPStart(d.ctx)
-	conn, err := netx.DialTimeout("tcp", d.addr, rs.dialTimeout)
-	//conn, err := d.dial()
+	//conn, err := netx.DialTimeout("tcp", d.addr, rs.dialTimeout)
+	conn, err := d.dial(rs.dialTimeout)
 	if err != nil {
 		d.lifecyle.OnTCPConnectionError(ctx, err)
 		return nil, err
@@ -248,7 +247,7 @@ func (d *dialer) startSession(rs *requiredSession) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	s, err := startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.requiredSessions, rs, d.lifecyle)
+	s, err := startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.pendingSessions, rs, d.lifecyle)
 
 	if err != nil {
 		ctx = d.lifecyle.OnSessionError(ctx, err, err)
