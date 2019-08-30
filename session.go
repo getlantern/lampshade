@@ -153,6 +153,7 @@ func (s *session) recvLoop() {
 	defer func() {
 		log.Debug("Closing lampshade TCP connection")
 		if s.requiredSessions != nil {
+			log.Debugf("Requesting new session: %#v", s.requiredSession)
 			s.requiredSessions <- s.requiredSession
 		}
 		closeErr := s.Conn.Close()
