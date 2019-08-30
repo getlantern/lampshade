@@ -137,6 +137,6 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		l.onError(conn, fullErr)
 		return fullErr
 	}
-	startSession(context.Background(), conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil, nil, nil)
+	startSession(context.Background(), conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil, nil, nil, nil)
 	return nil
 }

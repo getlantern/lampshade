@@ -83,6 +83,7 @@ type session struct {
 	nextID           uint32
 	mx               sync.RWMutex
 	requiredSessions chan *requiredSession
+	requiredSession  *requiredSession
 	lifecycle        ClientLifecycleListener
 	ctx              context.Context
 }
@@ -92,8 +93,9 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA,
-	connCh chan net.Conn, beforeClose func(*session), requiredSessions chan *requiredSession, lifecycle ClientLifecycleListener) (*session, error) {
+func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
+	cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session),
+	requiredSessions chan *requiredSession, rs *requiredSession, lifecycle ClientLifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -115,6 +117,7 @@ func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
 		requiredSessions: requiredSessions,
+		requiredSession:  rs,
 		lifecycle:        lifecycle,
 		ctx:              ctx,
 	}
@@ -150,7 +153,7 @@ func (s *session) recvLoop() {
 	defer func() {
 		log.Debug("Closing lampshade TCP connection")
 		if s.requiredSessions != nil {
-			s.requiredSessions <- newRequiredSession()
+			s.requiredSessions <- s.requiredSession
 		}
 		closeErr := s.Conn.Close()
 		if s.lifecycle != nil {
