@@ -53,6 +53,7 @@ type DialerOpts struct {
 	// Dial is the dial function to use for creating new TCP connections.
 	Dial DialFN
 
+	// Lifecycle is a listener for lifecycle events in lampshade.
 	Lifecycle ClientLifecycleListener
 }
 
