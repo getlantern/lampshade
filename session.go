@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	ReadTimeout = 15 * time.Second
+	ReadTimeout = 20 * time.Second
 )
 
 var (
@@ -85,8 +85,7 @@ type session struct {
 	mx               sync.RWMutex
 	requiredSessions chan *pendingSession
 	requiredSession  *pendingSession
-	lifecycle        ClientLifecycleListener
-	ctx              context.Context
+	lifecycle        SessionLifecycleListener
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -94,9 +93,9 @@ type session struct {
 // opened. If beforeClose is provided, the session will use it to notify when
 // it's about to close. If clientInitMsg is provided, this message will be sent
 // with the first frame sent in this session.
-func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
+func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
 	cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session),
-	requiredSessions chan *pendingSession, rs *pendingSession, lifecycle ClientLifecycleListener) (*session, error) {
+	requiredSessions chan *pendingSession, rs *pendingSession, lifecycle SessionLifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -120,7 +119,6 @@ func startSession(ctx context.Context, conn net.Conn, windowSize int, maxPadding
 		requiredSessions: requiredSessions,
 		requiredSession:  rs,
 		lifecycle:        lifecycle,
-		ctx:              ctx,
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -159,7 +157,7 @@ func (s *session) recvLoop() {
 		}
 		closeErr := s.Conn.Close()
 		if s.lifecycle != nil {
-			s.lifecycle.OnTCPClosed(s.ctx)
+			s.lifecycle.OnTCPClosed()
 		}
 		if closeErr != nil {
 			if stoppedOnExpectedEOF && strings.Contains(closeErr.Error(), idletiming.ErrIdled.Error()) {
@@ -258,7 +256,7 @@ func (s *session) recvLoop() {
 				// Padding is always at the end of a session frame, so stop processing
 				break frameLoop
 			case frameTypeACK:
-				c, open := s.getOrCreateStream(s.ctx, id)
+				c, open := s.getOrCreateStream(context.Background(), id)
 				if !open {
 					// Stream was already closed, ignore
 					continue
@@ -321,7 +319,7 @@ func (s *session) recvLoop() {
 				return
 			}
 
-			c, open := s.getOrCreateStream(s.ctx, id)
+			c, open := s.getOrCreateStream(context.Background(), id)
 			if !open {
 				if !alreadyLoggedReceiveForClosedStream[id] {
 					log.Debugf("Received data for closed stream %d", id)
@@ -579,7 +577,7 @@ func (s *session) getOrCreateStream(ctx context.Context, id uint16) (*stream, bo
 		return nil, false
 	}
 
-	c = newStream(ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id)
+	c = newStream(ctx, s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id), id, s.lifecycle)
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {

@@ -10,7 +10,7 @@ import (
 	"github.com/getlantern/ema"
 )
 
-const defaultDialTimeout = 40
+var defaultDialTimeout = 30 * time.Second
 
 // DialerOpts configures options for creating Dialers
 type DialerOpts struct {
@@ -54,8 +54,6 @@ type DialerOpts struct {
 	Dial DialFN
 
 	Lifecycle ClientLifecycleListener
-
-	Context context.Context
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -88,6 +86,12 @@ func NewDialer(opts *DialerOpts) Dialer {
 		opts.MaxStreamsPerConn,
 		opts.PingInterval,
 		opts.Cipher)
+	var lc ClientLifecycleListener
+	if opts.Lifecycle != nil {
+		lc = opts.Lifecycle
+	} else {
+		lc = NoopClientLifecycleListener()
+	}
 	d := &dialer{
 		windowSize:            opts.WindowSize,
 		maxPadding:            opts.MaxPadding,
@@ -102,10 +106,9 @@ func NewDialer(opts *DialerOpts) Dialer {
 		emaRTT:                ema.NewDuration(0, 0.5),
 		dial:                  opts.Dial,
 		pendingSessions:       make(chan *pendingSession, opts.LiveConns),
-		lifecyle:              opts.Lifecycle,
-		defaultDialTimeout:    40,
+		lifecyle:              lc,
 	}
-	d.ctx = d.lifecyle.OnStart(opts.Context)
+	d.lifecyle.OnStart()
 	for i := 0; i < opts.LiveConns-1; i++ {
 		d.pendingSessions <- newPendingSession()
 	}
@@ -137,7 +140,6 @@ type dialer struct {
 	dial                  DialFN
 	lifecyle              ClientLifecycleListener
 	ctx                   context.Context
-	defaultDialTimeout    int
 	addr                  string
 }
 
@@ -150,7 +152,7 @@ type pendingSession struct {
 func newPendingSession() *pendingSession {
 	return &pendingSession{
 		name:         "background",
-		dialTimeout:  time.Duration(defaultDialTimeout) * time.Second,
+		dialTimeout:  defaultDialTimeout,
 		sleepOnError: 2 * time.Second,
 	}
 }
@@ -229,13 +231,13 @@ func (d *dialer) EMARTT() time.Duration {
 }
 
 func (d *dialer) startSession(rs *pendingSession) (*session, error) {
-	ctx := d.lifecyle.OnTCPStart(d.ctx)
+	lc := d.lifecyle.OnTCPStart()
 	conn, err := d.dial(rs.dialTimeout)
 	if err != nil {
-		d.lifecyle.OnTCPConnectionError(ctx, err)
+		lc.OnTCPConnectionError(err)
 		return nil, err
 	}
-	ctx = d.lifecyle.OnTCPEstablished(ctx, conn)
+	lc.OnTCPEstablished(conn)
 
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
@@ -248,13 +250,13 @@ func (d *dialer) startSession(rs *pendingSession) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	s, err := startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,
-		d.emaRTT, nil, nil, d.pendingSessions, rs, d.lifecyle)
+	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,
+		d.emaRTT, nil, nil, d.pendingSessions, rs, lc)
 
 	if err != nil {
-		ctx = d.lifecyle.OnSessionError(ctx, err, err)
+		lc.OnSessionError(err, err)
 	} else {
-		ctx = d.lifecyle.OnSessionInit(ctx)
+		lc.OnSessionInit()
 	}
 	return s, err
 }

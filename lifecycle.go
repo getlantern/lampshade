@@ -7,38 +7,42 @@ import (
 
 // LifecycleListener allows lampshade users to listen to lampshade lifecycle events.
 type LifecycleListener interface {
-	OnSessionInit(context.Context) context.Context
-	OnSessionError(context.Context, error, error) context.Context
-	OnStreamInit(context.Context, context.Context, uint16) StreamLifecycleListener
-	OnTCPClosed(context.Context) context.Context
+	OnTCPStart() SessionLifecycleListener
 }
 
 // ServerLifecycleListener allows lampshade clients to listen to lampshade lifecycle events.
 type ServerLifecycleListener interface {
 	LifecycleListener
 
-	OnTCPConnReceived(net.Conn)
 	OnReadClientInitError(string)
 	OnDecodeClientInitError(string)
-	OnClientInitRead(context.Context)
+	OnClientInitRead()
 }
 
 // ClientLifecycleListener allows lampshade servers to listen to lampshade lifecycle events.
 type ClientLifecycleListener interface {
 	LifecycleListener
 
-	OnStart(context.Context) context.Context
-	OnTCPStart(context.Context) context.Context
-	OnTCPConnectionError(context.Context, error) context.Context
-	OnTCPEstablished(context.Context, net.Conn) context.Context
-	OnClientInitWritten(context.Context) context.Context
+	OnStart()
+}
+
+// SessionLifecycleListener is a listener for events on a single session (TCP connection)
+type SessionLifecycleListener interface {
+	OnTCPConnectionError(error)
+	OnTCPEstablished(net.Conn)
+	OnClientInitWritten()
+	OnSessionInit()
+	OnSessionError(error, error)
+	OnTCPClosed()
+
+	OnStreamStart(context.Context, uint16) StreamLifecycleListener
 }
 
 // StreamLifecycleListener allows lampshade users to listen to lampshade lifecycle events for a single stream.
 type StreamLifecycleListener interface {
-	OnStreamWrite(int) context.Context
-	OnStreamRead(int) context.Context
-	OnStreamClose() context.Context
+	OnStreamWrite(int)
+	OnStreamRead(int)
+	OnStreamClose()
 }
 
 // NoopServerLifecycleListener allows callers to use a noop listener.
@@ -49,6 +53,11 @@ func NoopServerLifecycleListener() ServerLifecycleListener {
 // NoopClientLifecycleListener allows callers to use a noop listener.
 func NoopClientLifecycleListener() ClientLifecycleListener {
 	return &noopClientLifecycleListener{&noopLifecycleListener{}}
+}
+
+// NoopSessionLifecycleListener allows callers to use a noop listener for a single stream.
+func NoopSessionLifecycleListener() SessionLifecycleListener {
+	return &noopSessionLifecycleListener{}
 }
 
 // NoopStreamLifecycleListener allows callers to use a noop listener for a single stream.
@@ -66,40 +75,30 @@ type noopClientLifecycleListener struct {
 	LifecycleListener
 }
 
+type noopSessionLifecycleListener struct{}
+
 type noopStreamLifecycleListener struct{}
 
-func (n *noopLifecycleListener) OnSessionInit(context.Context) context.Context {
-	return context.Background()
+func (n *noopLifecycleListener) OnTCPStart() SessionLifecycleListener {
+	return NoopSessionLifecycleListener()
 }
-func (n *noopLifecycleListener) OnStreamInit(context.Context, context.Context, uint16) StreamLifecycleListener {
+
+func (n *noopServerLifecycleListener) OnReadClientInitError(string)   {}
+func (n *noopServerLifecycleListener) OnDecodeClientInitError(string) {}
+func (n *noopServerLifecycleListener) OnClientInitRead()              {}
+
+func (n *noopClientLifecycleListener) OnStart() {}
+
+func (n *noopSessionLifecycleListener) OnSessionInit() {}
+func (n *noopSessionLifecycleListener) OnStreamStart(context.Context, uint16) StreamLifecycleListener {
 	return NoopStreamLifecycleListener()
 }
-func (n *noopLifecycleListener) OnSessionError(ctx context.Context, err1 error, err2 error) context.Context {
-	return ctx
-}
-func (n *noopLifecycleListener) OnTCPClosed(ctx context.Context) context.Context { return ctx }
+func (n *noopSessionLifecycleListener) OnSessionError(err1 error, err2 error) {}
+func (n *noopSessionLifecycleListener) OnTCPClosed()                          {}
+func (n *noopSessionLifecycleListener) OnTCPConnectionError(err error)        {}
+func (n *noopSessionLifecycleListener) OnTCPEstablished(net.Conn)             {}
+func (n *noopSessionLifecycleListener) OnClientInitWritten()                  {}
 
-func (n *noopServerLifecycleListener) OnTCPConnReceived(net.Conn)       {}
-func (n *noopServerLifecycleListener) OnReadClientInitError(string)     {}
-func (n *noopServerLifecycleListener) OnDecodeClientInitError(string)   {}
-func (n *noopServerLifecycleListener) OnClientInitRead(context.Context) {}
-
-func (n *noopClientLifecycleListener) OnStart(ctx context.Context) context.Context    { return ctx }
-func (n *noopClientLifecycleListener) OnTCPStart(ctx context.Context) context.Context { return ctx }
-func (n *noopClientLifecycleListener) OnTCPConnectionError(ctx context.Context, err error) context.Context {
-	return ctx
-}
-func (n *noopClientLifecycleListener) OnTCPEstablished(ctx context.Context, conn net.Conn) context.Context {
-	return ctx
-}
-func (n *noopClientLifecycleListener) OnClientInitWritten(ctx context.Context) context.Context {
-	return ctx
-}
-
-func (n *noopStreamLifecycleListener) OnStreamWrite(num int) context.Context {
-	return context.Background()
-}
-func (n *noopStreamLifecycleListener) OnStreamRead(num int) context.Context {
-	return context.Background()
-}
-func (n *noopStreamLifecycleListener) OnStreamClose() context.Context { return context.Background() }
+func (n *noopStreamLifecycleListener) OnStreamWrite(num int) {}
+func (n *noopStreamLifecycleListener) OnStreamRead(num int)  {}
+func (n *noopStreamLifecycleListener) OnStreamClose()        {}
