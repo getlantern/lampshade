@@ -188,7 +188,6 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	c := s.createStream(ctx)
 	select {
 	case d.liveSessions <- s:
-		log.Debug("Added session back")
 	default:
 		log.Debug("Maximum live sessions reached")
 	}
