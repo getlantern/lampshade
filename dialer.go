@@ -115,7 +115,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	d.pendingSessions <- &pendingSession{
 		name:         "liveness",
 		dialTimeout:  5 * time.Second,
-		sleepOnError: 1 * time.Second,
+		sleepOnError: 0 * time.Second,
 	}
 	go d.maintainTCPConnections()
 	return d
@@ -183,7 +183,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	c := s.CreateStream(ctx)
+	c := s.createStream(ctx)
 	select {
 	case d.liveSessions <- s:
 		log.Debug("Added session back")
@@ -199,20 +199,22 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 	for {
 		select {
 		case s := <-d.liveSessions:
-			// Note that the default maximum number of streams per session is 65535, which we are very unlikely to ever
-			// hit in practice.
-			if s.AllowNewStream(d.maxStreamsPerConn) {
-				return s, nil
+			if s.isClosed() {
+				// Closed sessions will trigger the creation of new ones, so keep waiting for a new session.
+				continue
 			}
 
-			// If this session has maximized its streams (again highly unlikely in practice), then trigger creating
-			// a new session if we haven't reached the maximum number of sessions.
-			select {
-			case d.pendingSessions <- newPendingSession():
-				log.Debug("Added required session")
-			default:
-				log.Debug("Maximum sessions reached")
+			if !s.allowNewStream(d.maxStreamsPerConn) {
+				// The default number of streams per session is 65535, so this is unlikely to be reached.
+				select {
+				case d.pendingSessions <- newPendingSession():
+					log.Debug("Added required session")
+				default:
+					log.Debug("Maximum sessions reached")
+				}
 			}
+
+			return s, nil
 
 		case <-ctx.Done():
 			elapsed := time.Since(start).Seconds()
@@ -228,7 +230,6 @@ func (d *dialer) EMARTT() time.Duration {
 
 func (d *dialer) startSession(rs *pendingSession) (*session, error) {
 	ctx := d.lifecyle.OnTCPStart(d.ctx)
-	//conn, err := netx.DialTimeout("tcp", d.addr, rs.dialTimeout)
 	conn, err := d.dial(rs.dialTimeout)
 	if err != nil {
 		d.lifecyle.OnTCPConnectionError(ctx, err)
@@ -247,7 +248,8 @@ func (d *dialer) startSession(rs *pendingSession) (*session, error) {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	s, err := startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool, d.emaRTT, nil, nil, d.pendingSessions, rs, d.lifecyle)
+	s, err := startSession(ctx, conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,
+		d.emaRTT, nil, nil, d.pendingSessions, rs, d.lifecyle)
 
 	if err != nil {
 		ctx = d.lifecyle.OnSessionError(ctx, err, err)

@@ -49,8 +49,9 @@ func trackStats() {
 }
 
 type sessionIntf interface {
-	AllowNewStream(maxStreamPerConn uint16) bool
-	CreateStream(context.Context) *stream
+	allowNewStream(maxStreamPerConn uint16) bool
+	createStream(context.Context) *stream
+	isClosed() bool
 }
 
 // session encapsulates the multiplexing of streams onto a single "physical"
@@ -559,7 +560,7 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 
 }
 
-func (s *session) CreateStream(ctx context.Context) *stream {
+func (s *session) createStream(ctx context.Context) *stream {
 	nextID := atomic.AddUint32(&s.nextID, 1)
 	stream, _ := s.getOrCreateStream(ctx, uint16(nextID-1))
 	return stream
@@ -587,15 +588,12 @@ func (s *session) getOrCreateStream(ctx context.Context, id uint16) (*stream, bo
 	return c, true
 }
 
-// AllowNewStream returns true if a new stream is allowed to be created over
+// allowNewStream returns true if a new stream is allowed to be created over
 // this session, and false otherwise.
-func (s *session) AllowNewStream(maxStreamPerConn uint16) bool {
+func (s *session) allowNewStream(maxStreamPerConn uint16) bool {
 	nextID := atomic.LoadUint32(&s.nextID)
 	if nextID > uint32(maxStreamPerConn) {
 		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
-		return false
-	}
-	if s.isClosed() {
 		return false
 	}
 	return true
