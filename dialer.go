@@ -25,7 +25,7 @@ type DialerOpts struct {
 	LiveConns int
 
 	// MaxStreamsPerConn - limits the number of streams per physical connection.
-	//                     If <=0, defaults to max uint16.
+	//                     If 0, defaults to max uint16.
 	MaxStreamsPerConn uint16
 
 	// IdleInterval - If we haven't dialed any new connections within this
@@ -76,7 +76,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.LiveConns <= 0 {
 		opts.LiveConns = 2
 	}
-	if opts.MaxStreamsPerConn <= 0 || opts.MaxStreamsPerConn > maxID {
+	if opts.MaxStreamsPerConn == 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
 
@@ -148,20 +148,17 @@ type dialer struct {
 }
 
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
-func (d *dialer) maintainTCPConnections() (net.Conn, error) {
-	for {
-		select {
-		case rs := <-d.pendingSessions:
-			start := time.Now()
-			s, err := d.startSession(rs)
-			if err != nil {
-				log.Debugf("Error starting session '%v': %v", rs.name, err.Error())
-				time.Sleep(rs.sleepOnError)
-				d.pendingSessions <- rs
-			} else {
-				log.Debugf("Created session in %v to %#v", time.Since(start), rs)
-				d.liveSessions <- s
-			}
+func (d *dialer) maintainTCPConnections() {
+	for rs := range d.pendingSessions {
+		start := time.Now()
+		s, err := d.startSession(rs)
+		if err != nil {
+			log.Debugf("Error starting session '%v': %v", rs.name, err.Error())
+			time.Sleep(rs.sleepOnError)
+			d.pendingSessions <- rs
+		} else {
+			log.Debugf("Created session in %v to %#v", time.Since(start), rs)
+			d.liveSessions <- s
 		}
 	}
 }
@@ -209,7 +206,7 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 
 		case <-ctx.Done():
 			elapsed := time.Since(start).Seconds()
-			err := fmt.Errorf("No session available after %f seconds to %v", elapsed, d.name)
+			err := fmt.Errorf("no session available after %f seconds to %v", elapsed, d.name)
 			return nil, err
 		}
 	}
@@ -230,13 +227,13 @@ func (d *dialer) startSession(rs *pendingSession) (*session, error) {
 
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to create crypto spec for %v: %v", d.cipherCode, err)
+		return nil, fmt.Errorf("unable to create crypto spec for %v: %v", d.cipherCode, err)
 	}
 
 	// Generate the client init message
 	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, cs)
 	if err != nil {
-		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
+		return nil, fmt.Errorf("unable to generate client init message: %v", err)
 	}
 
 	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,

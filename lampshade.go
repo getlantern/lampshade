@@ -220,8 +220,6 @@ const (
 	maxSecretSize  = 32
 	metaIVSize     = 12
 
-	protocolVersion1 = 1
-
 	// NoEncryption is no encryption
 	NoEncryption = 1
 	// AES128GCM is 128-bit AES in GCM mode
@@ -387,14 +385,6 @@ func withFrameType(header []byte, frameType byte) []byte {
 
 func frameTypeAndID(header []byte) (byte, uint16) {
 	return header[0], binaryEncoding.Uint16(header[1:])
-}
-
-func setFrameType(header []byte, frameType byte) {
-	header[0] = frameType
-}
-
-func frameType(header []byte) byte {
-	return header[0]
 }
 
 func ackWithFrames(header []byte, frames int32) []byte {
