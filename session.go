@@ -156,9 +156,7 @@ func (s *session) recvLoop() {
 			s.requiredSessions <- s.requiredSession
 		}
 		closeErr := s.Conn.Close()
-		if s.lifecycle != nil {
-			s.lifecycle.OnTCPClosed()
-		}
+		s.lifecycle.OnTCPClosed()
 		if closeErr != nil {
 			if stoppedOnExpectedEOF && strings.Contains(closeErr.Error(), idletiming.ErrIdled.Error()) {
 				// recvLoop stopped with an expected EOF caused by an idled connection.
@@ -555,7 +553,7 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 		// considered no good at this point and we won't bother sending anything.
 		go c.close(false, readErr, writeErr)
 	}
-
+	s.lifecycle.OnSessionError(readErr, writeErr)
 }
 
 func (s *session) createStream(ctx context.Context) *stream {

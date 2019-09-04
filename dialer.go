@@ -207,13 +207,13 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 			}
 
 			if !s.allowNewStream(d.maxStreamsPerConn) {
+				log.Debug("Maximum streams reached for session")
 				// The default number of streams per session is 65535, so this is unlikely to be reached.
 				select {
 				case d.pendingSessions <- newPendingSession():
-					log.Debug("Added required session")
 				default:
-					log.Debug("Maximum sessions reached")
 				}
+				continue
 			}
 
 			return s, nil
