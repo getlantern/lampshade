@@ -119,7 +119,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	d.pendingSessions <- &pendingSession{
 		name:         "liveness",
 		dialTimeout:  5 * time.Second,
-		sleepOnError: 0 * time.Second,
+		sleepOnError: 1 * time.Second,
 	}
 	go d.maintainTCPConnections()
 	return d
