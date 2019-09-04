@@ -1,6 +1,8 @@
 package lampshade
 
 import (
+	"time"
+
 	"github.com/getlantern/keyman"
 
 	"crypto/rsa"
@@ -14,8 +16,9 @@ func ExampleNewDialer() {
 		Pool:            NewBufferPool(100),
 		Cipher:          AES128GCM,
 		ServerPublicKey: &publicKey,
-	}).BoundTo(func() (net.Conn, error) {
-		return net.Dial("tcp", "myserver:9352")
+		Dial: func(time.Duration) (net.Conn, error) {
+			return net.Dial("tcp", "myserver:9352")
+		},
 	})
 
 	// Get a connection to the server

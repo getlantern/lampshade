@@ -132,16 +132,20 @@ type dialer struct {
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
 func (d *dialer) maintainTCPConnections() {
 	for rs := range d.pendingSessions {
-		start := time.Now()
-		s, err := d.startSession(rs)
-		if err != nil {
-			log.Debugf("Error starting session '%v': %v", rs.name, err.Error())
-			time.Sleep(rs.sleepOnError)
-			d.pendingSessions <- rs
-		} else {
-			log.Debugf("Created session in %v to %#v", time.Since(start), rs)
-			d.liveSessions <- s
-		}
+		go d.trySession(rs)
+	}
+}
+
+func (d *dialer) trySession(ps *pendingSession) {
+	start := time.Now()
+	s, err := d.startSession(ps)
+	if err != nil {
+		log.Debugf("Error starting session '%v': %v", ps.name, err.Error())
+		time.Sleep(ps.sleepOnError)
+		d.pendingSessions <- ps
+	} else {
+		log.Debugf("Created session in %v to %#v", time.Since(start), ps)
+		d.liveSessions <- s
 	}
 }
 
