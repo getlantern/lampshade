@@ -421,3 +421,23 @@ func echo() []byte {
 	echo[tsSize] = frameTypeEcho
 	return echo
 }
+
+type pendingSession struct {
+	name         string
+	dialTimeout  time.Duration
+	sleepOnError time.Duration
+}
+
+func newPendingSession(name string) *pendingSession {
+	return &pendingSession{
+		name:         "background to " + name,
+		dialTimeout:  defaultDialTimeout,
+		sleepOnError: 2 * time.Second,
+	}
+}
+
+func newNoopSession() *pendingSession {
+	return &pendingSession{
+		name: "noop",
+	}
+}

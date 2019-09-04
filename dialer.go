@@ -55,6 +55,9 @@ type DialerOpts struct {
 
 	// Lifecycle is a listener for lifecycle events in lampshade.
 	Lifecycle ClientLifecycleListener
+
+	// Name is a more descriptive name of the dialer.
+	Name string
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -108,16 +111,17 @@ func NewDialer(opts *DialerOpts) Dialer {
 		dial:                  opts.Dial,
 		pendingSessions:       make(chan *pendingSession, opts.LiveConns),
 		lifecyle:              lc,
+		name:                  opts.Name,
 	}
 	d.lifecyle.OnStart()
 	for i := 0; i < opts.LiveConns-1; i++ {
-		d.pendingSessions <- newPendingSession()
+		d.pendingSessions <- newPendingSession(d.name)
 	}
 
 	// We create another background session with a shorter dial timeout to ensure liveness in the case of network
 	// disruptions.
 	d.pendingSessions <- &pendingSession{
-		name:         "liveness",
+		name:         "liveness to " + d.name,
 		dialTimeout:  5 * time.Second,
 		sleepOnError: 1 * time.Second,
 	}
@@ -140,22 +144,7 @@ type dialer struct {
 	emaRTT                *ema.EMA
 	dial                  DialFN
 	lifecyle              ClientLifecycleListener
-	ctx                   context.Context
-	addr                  string
-}
-
-type pendingSession struct {
-	name         string
-	dialTimeout  time.Duration
-	sleepOnError time.Duration
-}
-
-func newPendingSession() *pendingSession {
-	return &pendingSession{
-		name:         "background",
-		dialTimeout:  defaultDialTimeout,
-		sleepOnError: 2 * time.Second,
-	}
+	name                  string
 }
 
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
@@ -170,7 +159,7 @@ func (d *dialer) maintainTCPConnections() (net.Conn, error) {
 				time.Sleep(rs.sleepOnError)
 				d.pendingSessions <- rs
 			} else {
-				log.Debugf("Created session in %v", time.Since(start))
+				log.Debugf("Created session in %v to %#v", time.Since(start), rs)
 				d.liveSessions <- s
 			}
 		}
@@ -190,7 +179,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	select {
 	case d.liveSessions <- s:
 	default:
-		log.Debug("Maximum live sessions reached")
+		log.Debugf("Maximum live sessions reached to %v", d.name)
 	}
 
 	return c, nil
@@ -207,10 +196,10 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 			}
 
 			if !s.allowNewStream(d.maxStreamsPerConn) {
-				log.Debug("Maximum streams reached for session")
+				log.Debugf("Maximum streams reached for session to %v", d.name)
 				// The default number of streams per session is 65535, so this is unlikely to be reached.
 				select {
-				case d.pendingSessions <- newPendingSession():
+				case d.pendingSessions <- newPendingSession(d.name):
 				default:
 				}
 				continue
@@ -220,7 +209,7 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 
 		case <-ctx.Done():
 			elapsed := time.Since(start).Seconds()
-			err := fmt.Errorf("No session available after %f seconds", elapsed)
+			err := fmt.Errorf("No session available after %f seconds to %v", elapsed, d.name)
 			return nil, err
 		}
 	}
