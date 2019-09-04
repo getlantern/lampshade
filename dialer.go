@@ -28,18 +28,8 @@ type DialerOpts struct {
 	//                     If 0, defaults to max uint16.
 	MaxStreamsPerConn uint16
 
-	// IdleInterval - If we haven't dialed any new connections within this
-	//                interval, open a new physical connection on the next dial.
-	IdleInterval time.Duration
-
 	// PingInterval - how frequently to ping to calculate RTT, set to 0 to disable
 	PingInterval time.Duration
-
-	// RedialSessionInterval - how frequently to redial a new session when
-	// there's no live session, for faster recovery after network failures.
-	// Defaults to 5 seconds.
-	// See https://github.com/getlantern/lantern-internal/issues/2534
-	RedialSessionInterval time.Duration
 
 	// Pool - BufferPool to use (required)
 	Pool BufferPool
@@ -79,11 +69,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.MaxStreamsPerConn == 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
-
-	if opts.RedialSessionInterval <= 0 {
-		opts.RedialSessionInterval = 5 * time.Second
-	}
-	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxLiveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   liveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
 		opts.WindowSize,
 		opts.MaxPadding,
 		opts.LiveConns,
@@ -97,21 +83,19 @@ func NewDialer(opts *DialerOpts) Dialer {
 		lc = NoopClientLifecycleListener()
 	}
 	d := &dialer{
-		windowSize:            opts.WindowSize,
-		maxPadding:            opts.MaxPadding,
-		maxStreamsPerConn:     opts.MaxStreamsPerConn,
-		idleInterval:          opts.IdleInterval,
-		pingInterval:          opts.PingInterval,
-		redialSessionInterval: opts.RedialSessionInterval,
-		pool:                  opts.Pool,
-		cipherCode:            opts.Cipher,
-		serverPublicKey:       opts.ServerPublicKey,
-		liveSessions:          make(chan sessionIntf, opts.LiveConns),
-		emaRTT:                ema.NewDuration(0, 0.5),
-		dial:                  opts.Dial,
-		pendingSessions:       make(chan *pendingSession, opts.LiveConns),
-		lifecyle:              lc,
-		name:                  opts.Name,
+		windowSize:        opts.WindowSize,
+		maxPadding:        opts.MaxPadding,
+		maxStreamsPerConn: opts.MaxStreamsPerConn,
+		pingInterval:      opts.PingInterval,
+		pool:              opts.Pool,
+		cipherCode:        opts.Cipher,
+		serverPublicKey:   opts.ServerPublicKey,
+		liveSessions:      make(chan sessionIntf, opts.LiveConns),
+		emaRTT:            ema.NewDuration(0, 0.5),
+		dial:              opts.Dial,
+		pendingSessions:   make(chan *pendingSession, opts.LiveConns),
+		lifecyle:          lc,
+		name:              opts.Name,
 	}
 	d.lifecyle.OnStart()
 	for i := 0; i < opts.LiveConns-1; i++ {
@@ -130,21 +114,19 @@ func NewDialer(opts *DialerOpts) Dialer {
 }
 
 type dialer struct {
-	windowSize            int
-	maxPadding            int
-	maxStreamsPerConn     uint16
-	idleInterval          time.Duration
-	pingInterval          time.Duration
-	redialSessionInterval time.Duration
-	pool                  BufferPool
-	cipherCode            Cipher
-	serverPublicKey       *rsa.PublicKey
-	liveSessions          chan sessionIntf
-	pendingSessions       chan *pendingSession
-	emaRTT                *ema.EMA
-	dial                  DialFN
-	lifecyle              ClientLifecycleListener
-	name                  string
+	windowSize        int
+	maxPadding        int
+	maxStreamsPerConn uint16
+	pingInterval      time.Duration
+	pool              BufferPool
+	cipherCode        Cipher
+	serverPublicKey   *rsa.PublicKey
+	liveSessions      chan sessionIntf
+	pendingSessions   chan *pendingSession
+	emaRTT            *ema.EMA
+	dial              DialFN
+	lifecyle          ClientLifecycleListener
+	name              string
 }
 
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)

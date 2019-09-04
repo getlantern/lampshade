@@ -204,6 +204,7 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/getlantern/golog"
@@ -362,6 +363,33 @@ func (p *bufferPool) Get() []byte {
 }
 
 func (p *bufferPool) Put(b []byte) {
+	p.pool.Put(b)
+}
+
+// NewBufferSyncPool constructs a BufferPool backed by sync.Pool.
+func NewBufferSyncPool() BufferPool {
+	return &bufferSyncPool{
+		pool: &sync.Pool{
+			New: func() interface{} {
+				return make([]byte, maxFrameSize)
+			},
+		},
+	}
+}
+
+type bufferSyncPool struct {
+	pool *sync.Pool
+}
+
+func (p *bufferSyncPool) getForFrame() []byte {
+	return p.pool.Get().([]byte)
+}
+
+func (p *bufferSyncPool) Get() []byte {
+	return p.pool.Get().([]byte)[:MaxDataLen]
+}
+
+func (p *bufferSyncPool) Put(b []byte) {
 	p.pool.Put(b)
 }
 
