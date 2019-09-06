@@ -14,7 +14,7 @@ func TestSendBuffer(t *testing.T) {
 	depth := 5
 
 	out := &mockWriter{make(chan []byte)}
-	buf := newSendBuffer(header, out, depth)
+	buf := newSendBuffer(header, out, depth, NoopStreamLifecycleListener())
 
 	// write loop
 	go func() {

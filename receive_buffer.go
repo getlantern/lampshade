@@ -28,9 +28,11 @@ type receiveBuffer struct {
 	current       []byte
 	closed        bool
 	mx            sync.RWMutex
+	lifecycle     StreamLifecycleListener
 }
 
-func newReceiveBuffer(defaultHeader []byte, ack io.Writer, pool BufferPool, windowSize int) *receiveBuffer {
+func newReceiveBuffer(defaultHeader []byte, ack io.Writer, pool BufferPool, windowSize int,
+	lifecycle StreamLifecycleListener) *receiveBuffer {
 	ackInterval := int(math.Ceil(float64(windowSize) / 10))
 	return &receiveBuffer{
 		defaultHeader: defaultHeader,
@@ -39,6 +41,7 @@ func newReceiveBuffer(defaultHeader []byte, ack io.Writer, pool BufferPool, wind
 		in:            make(chan []byte, windowSize),
 		ack:           ack,
 		pool:          pool,
+		lifecycle:     lifecycle,
 	}
 }
 
@@ -105,13 +108,15 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				buf.ackIfNecessary()
 				return
 			}
-			timer := time.NewTimer(deadline.Sub(now))
+			delay := deadline.Sub(now)
+			timer := time.NewTimer(delay)
 			select {
 			case <-timer.C:
 				// Nothing read within deadline
-				err = ErrTimeout
+				err = newErrTimeoutWithTime("read timer fired", delay)
 				timer.Stop()
 				buf.ackIfNecessary()
+				buf.lifecycle.OnStreamReadError(err)
 				return
 			case frame, open := <-buf.in:
 				// Read next frame, continue loop

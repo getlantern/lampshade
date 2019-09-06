@@ -42,6 +42,8 @@ type SessionLifecycleListener interface {
 type StreamLifecycleListener interface {
 	OnStreamWrite(int)
 	OnStreamRead(int)
+	OnStreamWriteError(error)
+	OnStreamReadError(error)
 	OnStreamClose()
 }
 
@@ -99,6 +101,8 @@ func (n *noopSessionLifecycleListener) OnTCPConnectionError(err error)        {}
 func (n *noopSessionLifecycleListener) OnTCPEstablished(net.Conn)             {}
 func (n *noopSessionLifecycleListener) OnClientInitWritten()                  {}
 
-func (n *noopStreamLifecycleListener) OnStreamWrite(num int) {}
-func (n *noopStreamLifecycleListener) OnStreamRead(num int)  {}
-func (n *noopStreamLifecycleListener) OnStreamClose()        {}
+func (n *noopStreamLifecycleListener) OnStreamWrite(int)        {}
+func (n *noopStreamLifecycleListener) OnStreamRead(int)         {}
+func (n *noopStreamLifecycleListener) OnStreamWriteError(error) {}
+func (n *noopStreamLifecycleListener) OnStreamReadError(error)  {}
+func (n *noopStreamLifecycleListener) OnStreamClose()           {}

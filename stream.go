@@ -29,13 +29,14 @@ type stream struct {
 func newStream(ctx context.Context, s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte, id uint16,
 	sessionLifecycle SessionLifecycleListener) *stream {
 	atomic.AddInt64(&openStreams, 1)
+	lc := sessionLifecycle.OnStreamStart(ctx, id)
 	return &stream{
 		Conn:      s,
 		session:   s,
 		pool:      bp,
-		sb:        newSendBuffer(defaultHeader, w, windowSize),
-		rb:        newReceiveBuffer(defaultHeader, w, bp, windowSize),
-		lifecycle: sessionLifecycle.OnStreamStart(ctx, id),
+		sb:        newSendBuffer(defaultHeader, w, windowSize, lc),
+		rb:        newReceiveBuffer(defaultHeader, w, bp, windowSize, lc),
+		lifecycle: lc,
 	}
 }
 

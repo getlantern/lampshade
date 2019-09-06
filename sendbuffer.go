@@ -32,15 +32,17 @@ type sendBuffer struct {
 	closing        bool
 	closed         sync.WaitGroup
 	writeTimer     *time.Timer
+	lifecycle      StreamLifecycleListener
 }
 
-func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int) *sendBuffer {
+func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int, lifecycle StreamLifecycleListener) *sendBuffer {
 	buf := &sendBuffer{
 		defaultHeader:  defaultHeader,
 		window:         newWindow(windowSize),
 		in:             make(chan []byte, windowSize),
 		closeRequested: make(chan bool, 1),
 		writeTimer:     time.NewTimer(largeTimeout),
+		lifecycle:      lifecycle,
 	}
 	buf.closed.Add(1)
 	ops.Go(func() { buf.sendLoop(w) })
@@ -131,17 +133,22 @@ func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
 
 	now := time.Now()
 	if writeDeadline.Before(now) {
-		return 0, ErrTimeout
+		err := newErrTimeout("writing after deadline passed")
+		buf.lifecycle.OnStreamWriteError(err)
+		return 0, err
 	}
 	if !buf.writeTimer.Stop() {
 		<-buf.writeTimer.C
 	}
-	buf.writeTimer.Reset(writeDeadline.Sub(now))
+	delay := writeDeadline.Sub(now)
+	buf.writeTimer.Reset(delay)
 	select {
 	case buf.in <- b:
 		return len(b), nil
 	case <-buf.writeTimer.C:
-		return 0, ErrTimeout
+		err := newErrTimeoutWithTime("write timer fired", delay)
+		buf.lifecycle.OnStreamWriteError(err)
+		return 0, err
 	}
 }
 

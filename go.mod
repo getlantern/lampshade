@@ -16,7 +16,7 @@ require (
 	github.com/getlantern/keyman v0.0.0-20180207174507-f55e7280e93a
 	github.com/getlantern/mockconn v0.0.0-20190708122800-637bd46d8034 // indirect
 	github.com/getlantern/mtime v0.0.0-20170117193331-ba114e4a82b0
-	github.com/getlantern/netx v0.0.0-20190110220209-9912de6f94fd
+	github.com/getlantern/netx v0.0.0-20190110220209-9912de6f94fd // indirect
 	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f
 	github.com/getlantern/tlsdefaults v0.0.0-20171004213447-cf35cfd0b1b4
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c

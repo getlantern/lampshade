@@ -203,8 +203,8 @@ package lampshade
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/getlantern/golog"
@@ -258,9 +258,6 @@ const (
 
 var (
 	log = golog.LoggerFor("lampshade")
-
-	// ErrTimeout indicates that an i/o operation timed out.
-	ErrTimeout = &netError{"lampshade i/o timeout", true, true}
 
 	// ErrConnectionClosed indicates that an i/o operation was attempted on a
 	// closed stream.
@@ -366,33 +363,6 @@ func (p *bufferPool) Put(b []byte) {
 	p.pool.Put(b)
 }
 
-// NewBufferSyncPool constructs a BufferPool backed by sync.Pool.
-func NewBufferSyncPool() BufferPool {
-	return &bufferSyncPool{
-		pool: &sync.Pool{
-			New: func() interface{} {
-				return make([]byte, maxFrameSize)
-			},
-		},
-	}
-}
-
-type bufferSyncPool struct {
-	pool *sync.Pool
-}
-
-func (p *bufferSyncPool) getForFrame() []byte {
-	return p.pool.Get().([]byte)
-}
-
-func (p *bufferSyncPool) Get() []byte {
-	return p.pool.Get().([]byte)[:MaxDataLen]
-}
-
-func (p *bufferSyncPool) Put(b []byte) {
-	p.pool.Put(b)
-}
-
 func setFrameTypeAndID(header []byte, frameType byte, id uint16) {
 	header[0] = frameType
 	binaryEncoding.PutUint16(header[1:], id)
@@ -458,4 +428,12 @@ func newNoopSession() *pendingSession {
 	return &pendingSession{
 		name: "noop",
 	}
+}
+
+func newErrTimeout(msg string) net.Error {
+	return &netError{"lampshade i/o timeout " + msg, true, true}
+}
+
+func newErrTimeoutWithTime(msg string, delay time.Duration) net.Error {
+	return newErrTimeout(fmt.Sprintf("lampshade i/o timeout %v after %v", msg, delay))
 }

@@ -16,7 +16,7 @@ func TestReceiveBuffer(t *testing.T) {
 
 	pool := &testpool{}
 	ack := &mockWriter{make(chan []byte, 1000)}
-	buf := newReceiveBuffer(header, ack, pool, depth)
+	buf := newReceiveBuffer(header, ack, pool, depth, NoopStreamLifecycleListener())
 	for i := 0; i < 2; i++ {
 		b := pool.Get()
 		b[dataHeaderSize] = fmt.Sprint(i)[0]

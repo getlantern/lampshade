@@ -43,18 +43,7 @@ func init() {
 	rand.Read(largeData)
 }
 
-var byteSyncPool = NewBufferSyncPool()
-
 var bytePool = NewBufferPool(30 * 1024 * 1024)
-
-func BenchmarkSyncPool(b *testing.B) {
-	b.ReportAllocs()
-	for n := 0; n < b.N; n++ {
-		obj := byteSyncPool.Get()
-		_ = obj
-		byteSyncPool.Put(obj)
-	}
-}
 
 func BenchmarkPool(b *testing.B) {
 	b.ReportAllocs()
