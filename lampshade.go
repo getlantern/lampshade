@@ -435,5 +435,5 @@ func newErrTimeout(msg string) net.Error {
 }
 
 func newErrTimeoutWithTime(msg string, delay time.Duration) net.Error {
-	return newErrTimeout(fmt.Sprintf("lampshade i/o timeout %v after %v", msg, delay))
+	return &netError{fmt.Sprintf("lampshade i/o timeout %v after %v", msg, delay), true, true}
 }
