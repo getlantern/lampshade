@@ -50,6 +50,23 @@ type DialerOpts struct {
 	Name string
 }
 
+type dialer struct {
+	windowSize        int
+	maxPadding        int
+	maxStreamsPerConn uint16
+	pingInterval      time.Duration
+	pool              BufferPool
+	cipherCode        Cipher
+	serverPublicKey   *rsa.PublicKey
+	liveSessions      chan sessionIntf
+	pendingSessions   chan *pendingSession
+	sessionRequests   chan bool
+	emaRTT            *ema.EMA
+	dial              DialFN
+	lifecyle          ClientLifecycleListener
+	name              string
+}
+
 // NewDialer wraps the given dial function with support for lampshade. The
 // returned Streams look and act just like regular net.Conns. The Dialer
 // will multiplex everything over a single net.Conn until it encounters a read
@@ -94,6 +111,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		emaRTT:            ema.NewDuration(0, 0.5),
 		dial:              opts.Dial,
 		pendingSessions:   make(chan *pendingSession, opts.LiveConns),
+		sessionRequests:   make(chan bool, 10),
 		lifecyle:          lc,
 		name:              opts.Name,
 	}
@@ -113,22 +131,6 @@ func NewDialer(opts *DialerOpts) Dialer {
 	return d
 }
 
-type dialer struct {
-	windowSize        int
-	maxPadding        int
-	maxStreamsPerConn uint16
-	pingInterval      time.Duration
-	pool              BufferPool
-	cipherCode        Cipher
-	serverPublicKey   *rsa.PublicKey
-	liveSessions      chan sessionIntf
-	pendingSessions   chan *pendingSession
-	emaRTT            *ema.EMA
-	dial              DialFN
-	lifecyle          ClientLifecycleListener
-	name              string
-}
-
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
 func (d *dialer) maintainTCPConnections() {
 	for rs := range d.pendingSessions {
@@ -145,7 +147,18 @@ func (d *dialer) trySession(ps *pendingSession) {
 		d.pendingSessions <- ps
 	} else {
 		log.Debugf("Created session in %v to %#v", time.Since(start), ps)
-		d.liveSessions <- s
+
+		// We now have a new TCP connection/session. At this point two things can happen:
+		// 1) The connection can be closed for any reason, in which case we want to request a new one
+		// 2) A dialer can request the session. In that case, it will retrieve the session and will
+		// immediate
+		select {
+		case <-s.closeCh:
+			log.Debugf("Session closed before requested. Requesting new session: %#v", s.pendingSession)
+			s.pendingSessions <- s.pendingSession
+		case <-d.sessionRequests:
+			d.liveSessions <- s
+		}
 	}
 }
 
@@ -169,6 +182,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 }
 
 func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
+	d.sessionRequests <- true
 	start := time.Now()
 	for {
 		select {
