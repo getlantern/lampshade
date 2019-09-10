@@ -160,6 +160,7 @@ func (d *dialer) recycleSession(s sessionIntf) {
 		log.Debugf("Session closed before requested. Requesting new session: %#v", s.getPendingSession())
 		d.pendingSessions <- s.getPendingSession()
 	case <-d.sessionRequests:
+		log.Debug("Got session request...adding to live sessions")
 		d.liveSessions <- s
 	}
 }
