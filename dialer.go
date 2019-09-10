@@ -134,22 +134,20 @@ func NewDialer(opts *DialerOpts) Dialer {
 
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
 func (d *dialer) maintainTCPConnections() {
-	for rs := range d.pendingSessions {
-		ops.Go(func() {
-			d.trySession(rs)
-		})
+	for sc := range d.pendingSessions {
+		d.trySession(sc)
 	}
 }
 
-func (d *dialer) trySession(ps *sessionConfig) {
+func (d *dialer) trySession(sc *sessionConfig) {
 	start := time.Now()
-	s, err := d.startSession(ps)
+	s, err := d.startSession(sc)
 	if err != nil {
-		log.Debugf("Error starting session '%v': %v", ps.name, err.Error())
-		time.Sleep(ps.sleepOnError)
-		d.pendingSessions <- ps
+		log.Debugf("Error starting session '%v': %v", sc.name, err.Error())
+		time.Sleep(sc.sleepOnError)
+		d.pendingSessions <- sc
 	} else {
-		log.Debugf("Created session in %v to %#v", time.Since(start), ps)
+		log.Debugf("Created session in %v to %#v", time.Since(start), sc)
 		d.recycleSession(s)
 	}
 }
