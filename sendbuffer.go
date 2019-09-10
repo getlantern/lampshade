@@ -118,9 +118,9 @@ func (buf *sendBuffer) send(b []byte, writeDeadline time.Time) (int, error) {
 	n, err := buf.doSend(b, writeDeadline)
 	buf.muClosing.RUnlock()
 	if err != nil {
-		buf.lifecycle.OnStreamWrite(n)
-	} else {
 		buf.lifecycle.OnStreamWriteError(err)
+	} else {
+		buf.lifecycle.OnStreamWrite(n)
 	}
 	return n, err
 }

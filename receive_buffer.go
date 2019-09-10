@@ -67,9 +67,9 @@ func (buf *receiveBuffer) submit(frame []byte) {
 func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err error) {
 	n, err := buf.doRead(b, deadline)
 	if err != nil {
-		buf.lifecycle.OnStreamRead(n)
-	} else {
 		buf.lifecycle.OnStreamReadError(err)
+	} else {
+		buf.lifecycle.OnStreamRead(n)
 	}
 	return n, err
 }
