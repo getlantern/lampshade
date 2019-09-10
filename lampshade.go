@@ -410,22 +410,22 @@ func echo() []byte {
 	return echo
 }
 
-type pendingSession struct {
+type sessionConfig struct {
 	name         string
 	dialTimeout  time.Duration
 	sleepOnError time.Duration
 }
 
-func newPendingSession(name string) *pendingSession {
-	return &pendingSession{
+func newSessionConfig(name string) *sessionConfig {
+	return &sessionConfig{
 		name:         "background to " + name,
 		dialTimeout:  defaultDialTimeout,
 		sleepOnError: 2 * time.Second,
 	}
 }
 
-func newNoopSession() *pendingSession {
-	return &pendingSession{
+func newNoopSession() *sessionConfig {
+	return &sessionConfig{
 		name: "noop",
 	}
 }

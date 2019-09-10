@@ -53,7 +53,7 @@ type sessionIntf interface {
 	createStream(context.Context) *stream
 	isClosed() bool
 
-	getPendingSession() *pendingSession
+	getSessionConfig() *sessionConfig
 	getCloseCh() chan struct{}
 }
 
@@ -86,7 +86,7 @@ type session struct {
 	closeOnce        sync.Once
 	nextID           uint32
 	mx               sync.RWMutex
-	pendingSession   *pendingSession
+	sessionConfig    *sessionConfig
 	lifecycle        SessionLifecycleListener
 }
 
@@ -97,7 +97,7 @@ type session struct {
 // with the first frame sent in this session.
 func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
 	cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session),
-	ps *pendingSession, lifecycle SessionLifecycleListener) (*session, error) {
+	sc *sessionConfig, lifecycle SessionLifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -118,7 +118,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
-		pendingSession:   ps,
+		sessionConfig:    sc,
 		lifecycle:        lifecycle,
 	}
 	var err error
@@ -135,8 +135,8 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 	return s, nil
 }
 
-func (s *session) getPendingSession() *pendingSession {
-	return s.pendingSession
+func (s *session) getSessionConfig() *sessionConfig {
+	return s.sessionConfig
 }
 
 func (s *session) getCloseCh() chan struct{} {
@@ -159,7 +159,7 @@ func (s *session) recvLoop() {
 	stoppedOnExpectedEOF := false
 
 	defer func() {
-		log.Debugf("Closing lampshade TCP connection: %#v", s.pendingSession)
+		log.Debugf("Closing lampshade TCP connection: %#v", s.sessionConfig)
 		closeErr := s.Conn.Close()
 		s.lifecycle.OnTCPClosed()
 		if closeErr != nil {
@@ -168,7 +168,7 @@ func (s *session) recvLoop() {
 				// Closing an idled connection is expected to fail, so don't bother
 				// logging the error.
 			} else {
-				log.Errorf("Unexpected error closing underlying connection to %#v: %v", s.pendingSession, closeErr)
+				log.Errorf("Unexpected error closing underlying connection to %#v: %v", s.sessionConfig, closeErr)
 			}
 		}
 		atomic.AddInt64(&recvLoops, -1)
@@ -194,7 +194,7 @@ func (s *session) recvLoop() {
 				return err
 			}
 			if s.isClosed() {
-				log.Debugf("recvLoop detected session closed to %#v", s.pendingSession)
+				log.Debugf("recvLoop detected session closed to %#v", s.sessionConfig)
 				return io.EOF
 			}
 			b = b[n:]
@@ -325,7 +325,7 @@ func (s *session) recvLoop() {
 			c, open := s.getOrCreateStream(context.Background(), id)
 			if !open {
 				if !alreadyLoggedReceiveForClosedStream[id] {
-					log.Debugf("Received data for closed stream %d to %#v", id, s.pendingSession)
+					log.Debugf("Received data for closed stream %d to %#v", id, s.sessionConfig)
 					alreadyLoggedReceiveForClosedStream[id] = true
 				}
 				// Stream was already closed, ignore
@@ -544,13 +544,13 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	if readErr == nil {
 		readErr = ErrBrokenPipe
 	} else if readErr != io.EOF {
-		log.Errorf("Error on reading from %#v: %v", s.pendingSession, readErr)
+		log.Errorf("Error on reading from %#v: %v", s.sessionConfig, readErr)
 	}
 
 	if writeErr == nil {
 		writeErr = ErrBrokenPipe
 	} else {
-		log.Errorf("Error on writing to %#v: %v", s.pendingSession, writeErr)
+		log.Errorf("Error on writing to %#v: %v", s.sessionConfig, writeErr)
 	}
 
 	for _, c := range streams {

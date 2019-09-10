@@ -59,7 +59,7 @@ type dialer struct {
 	cipherCode        Cipher
 	serverPublicKey   *rsa.PublicKey
 	liveSessions      chan sessionIntf
-	pendingSessions   chan *pendingSession
+	pendingSessions   chan *sessionConfig
 	sessionRequests   chan bool
 	emaRTT            *ema.EMA
 	dial              DialFN
@@ -110,19 +110,19 @@ func NewDialer(opts *DialerOpts) Dialer {
 		liveSessions:      make(chan sessionIntf, opts.LiveConns),
 		emaRTT:            ema.NewDuration(0, 0.5),
 		dial:              opts.Dial,
-		pendingSessions:   make(chan *pendingSession, opts.LiveConns),
+		pendingSessions:   make(chan *sessionConfig, opts.LiveConns),
 		sessionRequests:   make(chan bool, 10),
 		lifecyle:          lc,
 		name:              opts.Name,
 	}
 	d.lifecyle.OnStart()
 	for i := 0; i < opts.LiveConns-1; i++ {
-		d.pendingSessions <- newPendingSession(d.name)
+		d.pendingSessions <- newSessionConfig(d.name)
 	}
 
 	// We create another background session with a shorter dial timeout to ensure liveness in the case of network
 	// disruptions.
-	d.pendingSessions <- &pendingSession{
+	d.pendingSessions <- &sessionConfig{
 		name:         "liveness to " + d.name,
 		dialTimeout:  5 * time.Second,
 		sleepOnError: 1 * time.Second,
@@ -138,7 +138,7 @@ func (d *dialer) maintainTCPConnections() {
 	}
 }
 
-func (d *dialer) trySession(ps *pendingSession) {
+func (d *dialer) trySession(ps *sessionConfig) {
 	start := time.Now()
 	s, err := d.startSession(ps)
 	if err != nil {
@@ -157,10 +157,9 @@ func (d *dialer) recycleSession(s sessionIntf) {
 	// 2) A dialer can request the session. In that case, it will retrieve the session.
 	select {
 	case <-s.getCloseCh():
-		log.Debugf("Session closed before requested. Requesting new session: %#v", s.getPendingSession())
-		d.pendingSessions <- s.getPendingSession()
+		log.Debugf("Session closed before requested. Requesting new session: %#v", s.getSessionConfig())
+		d.pendingSessions <- s.getSessionConfig()
 	case <-d.sessionRequests:
-		log.Debug("Got session request...adding to live sessions")
 		d.liveSessions <- s
 	}
 }
@@ -195,7 +194,7 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 				log.Debugf("Maximum streams reached for session to %v", d.name)
 				// The default number of streams per session is 65535, so this is unlikely to be reached.
 				select {
-				case d.pendingSessions <- newPendingSession(d.name):
+				case d.pendingSessions <- newSessionConfig(d.name):
 				default:
 				}
 				continue
@@ -204,8 +203,7 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 			return s, nil
 
 		case <-ctx.Done():
-			elapsed := time.Since(start)
-			err := fmt.Errorf("no session available after %v to %v", elapsed, d.name)
+			err := fmt.Errorf("no session available after %v to %v", time.Since(start), d.name)
 			return nil, err
 		}
 	}
@@ -215,7 +213,7 @@ func (d *dialer) EMARTT() time.Duration {
 	return d.emaRTT.GetDuration()
 }
 
-func (d *dialer) startSession(rs *pendingSession) (*session, error) {
+func (d *dialer) startSession(rs *sessionConfig) (*session, error) {
 	lc := d.lifecyle.OnTCPStart()
 	conn, err := d.dial(rs.dialTimeout)
 	if err != nil {
