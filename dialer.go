@@ -147,18 +147,20 @@ func (d *dialer) trySession(ps *pendingSession) {
 		d.pendingSessions <- ps
 	} else {
 		log.Debugf("Created session in %v to %#v", time.Since(start), ps)
+		d.recycleSession(s)
+	}
+}
 
-		// We now have a new TCP connection/session. At this point two things can happen:
-		// 1) The connection can be closed for any reason, in which case we want to request a new one
-		// 2) A dialer can request the session. In that case, it will retrieve the session and will
-		// immediate
-		select {
-		case <-s.closeCh:
-			log.Debugf("Session closed before requested. Requesting new session: %#v", s.pendingSession)
-			s.pendingSessions <- s.pendingSession
-		case <-d.sessionRequests:
-			d.liveSessions <- s
-		}
+func (d *dialer) recycleSession(s sessionIntf) {
+	// We now have a new TCP connection/session. At this point two things can happen:
+	// 1) The connection can be closed for any reason, in which case we want to request a new one
+	// 2) A dialer can request the session. In that case, it will retrieve the session.
+	select {
+	case <-s.getCloseCh():
+		log.Debugf("Session closed before requested. Requesting new session: %#v", s.getPendingSession())
+		d.pendingSessions <- s.getPendingSession()
+	case <-d.sessionRequests:
+		d.liveSessions <- s
 	}
 }
 
@@ -172,11 +174,7 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 		return nil, err
 	}
 	c := s.createStream(ctx)
-	select {
-	case d.liveSessions <- s:
-	default:
-		log.Debugf("Maximum live sessions reached to %v", d.name)
-	}
+	go d.recycleSession(s)
 
 	return c, nil
 }

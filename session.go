@@ -52,6 +52,9 @@ type sessionIntf interface {
 	allowNewStream(maxStreamPerConn uint16) bool
 	createStream(context.Context) *stream
 	isClosed() bool
+
+	getPendingSession() *pendingSession
+	getCloseCh() chan struct{}
 }
 
 // session encapsulates the multiplexing of streams onto a single "physical"
@@ -132,6 +135,14 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 	ops.Go(s.sendLoop)
 	ops.Go(s.recvLoop)
 	return s, nil
+}
+
+func (s *session) getPendingSession() *pendingSession {
+	return s.pendingSession
+}
+
+func (s *session) getCloseCh() chan struct{} {
+	return s.closeCh
 }
 
 func (s *session) sendClientInitMsg(clientInitMsg []byte) {
