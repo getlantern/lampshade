@@ -152,7 +152,7 @@ func (d *dialer) trySession(ps *pendingSession) {
 }
 
 func (d *dialer) recycleSession(s sessionIntf) {
-	// We now have a new TCP connection/session. At this point two things can happen:
+	// We now have a new or established TCP connection/session. At this point two things can happen:
 	// 1) The connection can be closed for any reason, in which case we want to request a new one
 	// 2) A dialer can request the session. In that case, it will retrieve the session.
 	select {
@@ -199,12 +199,12 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 				}
 				continue
 			}
-
+			log.Debugf("Returning session in %v", time.Since(start))
 			return s, nil
 
 		case <-ctx.Done():
-			elapsed := time.Since(start).Seconds()
-			err := fmt.Errorf("no session available after %f seconds to %v", elapsed, d.name)
+			elapsed := time.Since(start)
+			err := fmt.Errorf("no session available after %v to %v", elapsed, d.name)
 			return nil, err
 		}
 	}
