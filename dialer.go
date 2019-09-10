@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/getlantern/ema"
+	"github.com/getlantern/ops"
 )
 
 var defaultDialTimeout = 30 * time.Second
@@ -127,14 +128,16 @@ func NewDialer(opts *DialerOpts) Dialer {
 		dialTimeout:  5 * time.Second,
 		sleepOnError: 1 * time.Second,
 	}
-	go d.maintainTCPConnections()
+	ops.Go(d.maintainTCPConnections)
 	return d
 }
 
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
 func (d *dialer) maintainTCPConnections() {
 	for rs := range d.pendingSessions {
-		go d.trySession(rs)
+		ops.Go(func() {
+			d.trySession(rs)
+		})
 	}
 }
 
