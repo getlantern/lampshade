@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	ReadTimeout = 20 * time.Second
+	ReadTimeout = 15 * time.Second
 )
 
 var (
@@ -86,7 +86,6 @@ type session struct {
 	closeOnce        sync.Once
 	nextID           uint32
 	mx               sync.RWMutex
-	pendingSessions  chan *pendingSession
 	pendingSession   *pendingSession
 	lifecycle        SessionLifecycleListener
 }
@@ -98,7 +97,7 @@ type session struct {
 // with the first frame sent in this session.
 func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
 	cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session),
-	pendingSessions chan *pendingSession, rs *pendingSession, lifecycle SessionLifecycleListener) (*session, error) {
+	ps *pendingSession, lifecycle SessionLifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -119,8 +118,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
-		pendingSessions:  pendingSessions,
-		pendingSession:   rs,
+		pendingSession:   ps,
 		lifecycle:        lifecycle,
 	}
 	var err error

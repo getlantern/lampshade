@@ -136,6 +136,6 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		l.onError(conn, fullErr)
 		return fullErr
 	}
-	startSession(conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil, nil, newNoopSession(), NoopSessionLifecycleListener())
+	startSession(conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil, newNoopSession(), NoopSessionLifecycleListener())
 	return nil
 }

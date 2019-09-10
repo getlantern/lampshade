@@ -235,7 +235,7 @@ func (d *dialer) startSession(rs *pendingSession) (*session, error) {
 	}
 
 	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,
-		d.emaRTT, nil, nil, d.pendingSessions, rs, lc)
+		d.emaRTT, nil, nil, rs, lc)
 
 	if err != nil {
 		lc.OnSessionError(err, err)
