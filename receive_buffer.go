@@ -65,6 +65,16 @@ func (buf *receiveBuffer) submit(frame []byte) {
 // As long as some data was already queued, read will not wait for more data
 // even if b has not yet been filled.
 func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err error) {
+	n, err := buf.doRead(b, deadline)
+	if err != nil {
+		buf.lifecycle.OnStreamRead(n)
+	} else {
+		buf.lifecycle.OnStreamReadError(err)
+	}
+	return n, err
+}
+
+func (buf *receiveBuffer) doRead(b []byte, deadline time.Time) (totalN int, err error) {
 	for {
 		n := copy(b, buf.current)
 		buf.current = buf.current[n:]
@@ -116,7 +126,6 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				err = newErrTimeoutWithTime("read timer fired", delay)
 				timer.Stop()
 				buf.ackIfNecessary()
-				buf.lifecycle.OnStreamReadError(err)
 				return
 			case frame, open := <-buf.in:
 				// Read next frame, continue loop

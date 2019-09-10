@@ -117,6 +117,11 @@ func (buf *sendBuffer) send(b []byte, writeDeadline time.Time) (int, error) {
 	buf.muClosing.RLock()
 	n, err := buf.doSend(b, writeDeadline)
 	buf.muClosing.RUnlock()
+	if err != nil {
+		buf.lifecycle.OnStreamWrite(n)
+	} else {
+		buf.lifecycle.OnStreamWriteError(err)
+	}
 	return n, err
 }
 
@@ -134,7 +139,6 @@ func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
 	now := time.Now()
 	if writeDeadline.Before(now) {
 		err := newErrTimeout("writing after deadline passed")
-		buf.lifecycle.OnStreamWriteError(err)
 		return 0, err
 	}
 	if !buf.writeTimer.Stop() {
@@ -147,7 +151,6 @@ func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
 		return len(b), nil
 	case <-buf.writeTimer.C:
 		err := newErrTimeoutWithTime("write timer fired", delay)
-		buf.lifecycle.OnStreamWriteError(err)
 		return 0, err
 	}
 }

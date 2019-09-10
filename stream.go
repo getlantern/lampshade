@@ -49,7 +49,6 @@ func (c *stream) Read(b []byte) (int, error) {
 		return 0, finalReadErr
 	}
 	r, err := c.rb.read(b, readDeadline)
-	c.lifecycle.OnStreamRead(r)
 	return r, err
 }
 
@@ -72,7 +71,6 @@ func (c *stream) Write(b []byte) (int, error) {
 	b = c.pool.getForFrame()[:len(b)]
 	copy(b, _b)
 	w, err := c.sb.send(b, writeDeadline)
-	c.lifecycle.OnStreamWrite(w)
 	return w, err
 }
 
