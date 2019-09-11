@@ -11,8 +11,6 @@ import (
 	"github.com/getlantern/ops"
 )
 
-var defaultDialTimeout = 30 * time.Second
-
 // DialerOpts configures options for creating Dialers
 type DialerOpts struct {
 	// WindowSize - transmit window size in # of frames. If <= 0, defaults to 1250.
@@ -49,6 +47,13 @@ type DialerOpts struct {
 
 	// Name is a more descriptive name of the dialer.
 	Name string
+
+	// The long dial timeout (in seconds) to use for one TCP connection to the lampshade server.
+	LongDialTimeout int
+
+	// The short dial timeout (in seconds) to use for the TCP connection to the lampshade server that is
+	// charged with making lampshade more responsive to network disruptions or complete network outages.
+	ShortDialTimeout int
 }
 
 type dialer struct {
@@ -87,6 +92,12 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.MaxStreamsPerConn == 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
+	if opts.LongDialTimeout == 0 {
+		opts.LongDialTimeout = 30
+	}
+	if opts.ShortDialTimeout == 0 {
+		opts.ShortDialTimeout = 5
+	}
 	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   liveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
 		opts.WindowSize,
 		opts.MaxPadding,
@@ -124,7 +135,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	for i := 0; i < opts.LiveConns-1; i++ {
 		d.pendingSessions <- &sessionConfig{
 			name:         "background to " + d.name,
-			dialTimeout:  defaultDialTimeout,
+			dialTimeout:  time.Duration(opts.LongDialTimeout) * time.Second,
 			sleepOnError: 2 * time.Second,
 		}
 	}
@@ -133,7 +144,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 	// disruptions.
 	d.pendingSessions <- &sessionConfig{
 		name:         "liveness to " + d.name,
-		dialTimeout:  5 * time.Second,
+		dialTimeout:  time.Duration(opts.ShortDialTimeout) * time.Second,
 		sleepOnError: 1 * time.Second,
 	}
 	ops.Go(d.maintainTCPConnections)
@@ -207,9 +218,9 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 		case s := <-d.liveSessions:
 			if s.isClosed() {
 				// Closed sessions will trigger the creation of new ones, so keep waiting for a new session.
+				log.Debugf("Found closed session. Continuing")
 				continue
 			}
-			log.Debugf("Returning session in %v", time.Since(start))
 			return s, nil
 
 		case <-ctx.Done():
