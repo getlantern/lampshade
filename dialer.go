@@ -216,23 +216,25 @@ func (d *dialer) EMARTT() time.Duration {
 
 func (d *dialer) startSession(rs *sessionConfig) (*session, error) {
 	lc := d.lifecyle.OnTCPStart()
-	conn, err := d.dial(rs.dialTimeout)
-	if err != nil {
-		lc.OnTCPConnectionError(err)
-		return nil, err
-	}
-	lc.OnTCPEstablished(conn)
-
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
+		lc.OnSessionError(err, err)
 		return nil, fmt.Errorf("unable to create crypto spec for %v: %v", d.cipherCode, err)
 	}
 
 	// Generate the client init message
 	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, cs)
 	if err != nil {
+		lc.OnSessionError(err, err)
 		return nil, fmt.Errorf("unable to generate client init message: %v", err)
 	}
+
+	conn, err := d.dial(rs.dialTimeout)
+	if err != nil {
+		lc.OnTCPConnectionError(err)
+		return nil, err
+	}
+	lc.OnTCPEstablished(conn)
 
 	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,
 		d.emaRTT, nil, nil, rs, lc)
