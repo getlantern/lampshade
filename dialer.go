@@ -92,10 +92,10 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.MaxStreamsPerConn == 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
-	if opts.LongDialTimeout == 0 {
+	if opts.LongDialTimeout <= 0 {
 		opts.LongDialTimeout = 30
 	}
-	if opts.ShortDialTimeout == 0 {
+	if opts.ShortDialTimeout <= 0 {
 		opts.ShortDialTimeout = 5
 	}
 	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   liveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
