@@ -181,6 +181,7 @@ func (d *dialer) recycleSession(s sessionIntf) {
 		go func() {
 			d.pendingSessions <- s.getSessionConfig()
 		}()
+		return
 	}
 	// We now have a new or established TCP connection/session. At this point two things can happen:
 	// 1) The connection can be closed for any reason, in which case we want to request a new one
