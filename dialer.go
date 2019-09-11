@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/getlantern/ema"
+	"github.com/getlantern/golog"
 	"github.com/getlantern/ops"
 )
 
@@ -51,8 +52,9 @@ type DialerOpts struct {
 	// The long dial timeout (in seconds) to use for one TCP connection to the lampshade server.
 	LongDialTimeout int
 
-	// The short dial timeout (in seconds) to use for the TCP connection to the lampshade server that is
-	// charged with making lampshade more responsive to network disruptions or complete network outages.
+	// The short dial timeout (in seconds) to use for the TCP connection to the lampshade server that
+	// is charged with making lampshade more responsive to network disruptions or complete network
+	// outages.
 	ShortDialTimeout int
 }
 
@@ -71,6 +73,7 @@ type dialer struct {
 	dial              DialFN
 	lifecyle          ClientLifecycleListener
 	name              string
+	log               golog.Logger
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -98,13 +101,6 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.ShortDialTimeout <= 0 {
 		opts.ShortDialTimeout = 5
 	}
-	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   liveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
-		opts.WindowSize,
-		opts.MaxPadding,
-		opts.LiveConns,
-		opts.MaxStreamsPerConn,
-		opts.PingInterval,
-		opts.Cipher)
 	var lc ClientLifecycleListener
 	if opts.Lifecycle != nil {
 		lc = opts.Lifecycle
@@ -130,7 +126,15 @@ func NewDialer(opts *DialerOpts) Dialer {
 		sessionRequests:   make(chan bool, 10),
 		lifecyle:          lc,
 		name:              opts.Name,
+		log:               golog.LoggerFor("lampshade-dialer"),
 	}
+	d.log.Debugf("Initialized Dialer with   windowSize: %v   maxPadding: %v   liveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
+		opts.WindowSize,
+		opts.MaxPadding,
+		opts.LiveConns,
+		opts.MaxStreamsPerConn,
+		opts.PingInterval,
+		opts.Cipher)
 	d.lifecyle.OnStart()
 	for i := 0; i < opts.LiveConns-1; i++ {
 		d.pendingSessions <- &sessionConfig{
@@ -140,8 +144,8 @@ func NewDialer(opts *DialerOpts) Dialer {
 		}
 	}
 
-	// We create another background session with a shorter dial timeout to ensure liveness in the case of network
-	// disruptions.
+	// We create another background session with a shorter dial timeout to ensure liveness in the
+	// case of network disruptions.
 	d.pendingSessions <- &sessionConfig{
 		name:         "liveness to " + d.name,
 		dialTimeout:  time.Duration(opts.ShortDialTimeout) * time.Second,
@@ -162,22 +166,22 @@ func (d *dialer) trySession(sc *sessionConfig) {
 	start := time.Now()
 	s, err := d.startSession(sc)
 	if err != nil {
-		log.Debugf("Error starting session '%v': %v", sc.name, err.Error())
-		// Sleeping when there's an error is necessary particularly for the case where the network is down, as this
-		// will then spin endlessly.
+		d.log.Debugf("Error starting session '%v': %v", sc.name, err.Error())
+		// Sleeping when there's an error is necessary particularly for the case where the network is
+		// down, as this will then spin endlessly.
 		time.Sleep(sc.sleepOnError)
 		d.pendingSessions <- sc
 	} else {
-		log.Debugf("Created session in %v to %#v", time.Since(start), sc)
+		d.log.Debugf("Created session in %v to %#v", time.Since(start), sc)
 		d.recycleSession(s)
 	}
 }
 
 func (d *dialer) recycleSession(s sessionIntf) {
 	if !s.allowNewStream(d.maxStreamsPerConn) {
-		log.Debugf("Maximum streams reached for session to %v", d.name)
-		// The default number of streams per session is 65535, so this is unlikely to be reached. If it is, we create
-		// an additional session with the same configuration as the full session.
+		d.log.Debugf("Maximum streams reached for session to %v", d.name)
+		// The default number of streams per session is 65535, so this is unlikely to be reached. If it
+		// is, we create an additional session with the same configuration as the full session.
 		go func() {
 			d.pendingSessions <- s.getSessionConfig()
 		}()
@@ -188,7 +192,7 @@ func (d *dialer) recycleSession(s sessionIntf) {
 	// 2) A dialer can request the session. In that case, it will retrieve the session.
 	select {
 	case <-s.getCloseCh():
-		log.Debugf("Session closed before requested. Requesting new session: %#v", s.getSessionConfig())
+		d.log.Debugf("Session closed before requested. Requesting new session: %#v", s.getSessionConfig())
 		d.pendingSessions <- s.getSessionConfig()
 	case <-d.sessionRequests:
 		d.liveSessions <- s
@@ -219,7 +223,7 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 		case s := <-d.liveSessions:
 			if s.isClosed() {
 				// Closed sessions will trigger the creation of new ones, so keep waiting for a new session.
-				log.Debugf("Found closed session. Continuing")
+				d.log.Debugf("Found closed session. Continuing")
 				continue
 			}
 			return s, nil
@@ -257,8 +261,8 @@ func (d *dialer) startSession(rs *sessionConfig) (*session, error) {
 	}
 	lc.OnTCPEstablished(conn)
 
-	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,
-		d.emaRTT, nil, nil, rs, lc)
+	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs,
+		clientInitMsg, d.pool, d.emaRTT, nil, nil, rs, lc)
 
 	if err != nil {
 		s.Close()
