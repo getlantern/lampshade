@@ -163,6 +163,9 @@ func (d *dialer) trySession(sc *sessionConfig) {
 }
 
 func (d *dialer) recycleSession(s sessionIntf) {
+	if s == nil {
+		return
+	}
 	if !s.allowNewStream(d.maxStreamsPerConn) {
 		log.Debugf("Maximum streams reached for session to %v", d.name)
 		// The default number of streams per session is 65535, so this is unlikely to be reached. If it is, we create
