@@ -416,14 +416,6 @@ type sessionConfig struct {
 	sleepOnError time.Duration
 }
 
-func newSessionConfig(name string) *sessionConfig {
-	return &sessionConfig{
-		name:         "background to " + name,
-		dialTimeout:  defaultDialTimeout,
-		sleepOnError: 2 * time.Second,
-	}
-}
-
 func newNoopSession() *sessionConfig {
 	return &sessionConfig{
 		name: "noop",

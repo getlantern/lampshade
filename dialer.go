@@ -100,6 +100,10 @@ func NewDialer(opts *DialerOpts) Dialer {
 	} else {
 		lc = NoopClientLifecycleListener()
 	}
+
+	// We allow more than LiveConns here to accommodate the rare case that individual sessions
+	// fill up with streams, and we need more.
+	maxConns := opts.LiveConns * 2
 	d := &dialer{
 		windowSize:        opts.WindowSize,
 		maxPadding:        opts.MaxPadding,
@@ -108,17 +112,21 @@ func NewDialer(opts *DialerOpts) Dialer {
 		pool:              opts.Pool,
 		cipherCode:        opts.Cipher,
 		serverPublicKey:   opts.ServerPublicKey,
-		liveSessions:      make(chan sessionIntf, opts.LiveConns),
+		liveSessions:      make(chan sessionIntf, maxConns),
 		emaRTT:            ema.NewDuration(0, 0.5),
 		dial:              opts.Dial,
-		pendingSessions:   make(chan *sessionConfig, opts.LiveConns),
+		pendingSessions:   make(chan *sessionConfig, maxConns),
 		sessionRequests:   make(chan bool, 10),
 		lifecyle:          lc,
 		name:              opts.Name,
 	}
 	d.lifecyle.OnStart()
 	for i := 0; i < opts.LiveConns-1; i++ {
-		d.pendingSessions <- newSessionConfig(d.name)
+		d.pendingSessions <- &sessionConfig{
+			name:         "background to " + d.name,
+			dialTimeout:  defaultDialTimeout,
+			sleepOnError: 2 * time.Second,
+		}
 	}
 
 	// We create another background session with a shorter dial timeout to ensure liveness in the case of network
@@ -144,6 +152,8 @@ func (d *dialer) trySession(sc *sessionConfig) {
 	s, err := d.startSession(sc)
 	if err != nil {
 		log.Debugf("Error starting session '%v': %v", sc.name, err.Error())
+		// Sleeping when there's an error is necessary particularly for the case where the network is down, as this
+		// will then spin endlessly.
 		time.Sleep(sc.sleepOnError)
 		d.pendingSessions <- sc
 	} else {
@@ -153,6 +163,14 @@ func (d *dialer) trySession(sc *sessionConfig) {
 }
 
 func (d *dialer) recycleSession(s sessionIntf) {
+	if !s.allowNewStream(d.maxStreamsPerConn) {
+		log.Debugf("Maximum streams reached for session to %v", d.name)
+		// The default number of streams per session is 65535, so this is unlikely to be reached. If it is, we create
+		// an additional session with the same configuration as the full session.
+		go func() {
+			d.pendingSessions <- s.getSessionConfig()
+		}()
+	}
 	// We now have a new or established TCP connection/session. At this point two things can happen:
 	// 1) The connection can be closed for any reason, in which case we want to request a new one
 	// 2) A dialer can request the session. In that case, it will retrieve the session.
@@ -186,16 +204,6 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 		case s := <-d.liveSessions:
 			if s.isClosed() {
 				// Closed sessions will trigger the creation of new ones, so keep waiting for a new session.
-				continue
-			}
-
-			if !s.allowNewStream(d.maxStreamsPerConn) {
-				log.Debugf("Maximum streams reached for session to %v", d.name)
-				// The default number of streams per session is 65535, so this is unlikely to be reached.
-				select {
-				case d.pendingSessions <- newSessionConfig(d.name):
-				default:
-				}
 				continue
 			}
 			log.Debugf("Returning session in %v", time.Since(start))
