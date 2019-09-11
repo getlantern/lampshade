@@ -143,7 +143,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 // maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
 func (d *dialer) maintainTCPConnections() {
 	for sc := range d.pendingSessions {
-		d.trySession(sc)
+		go d.trySession(sc)
 	}
 }
 
