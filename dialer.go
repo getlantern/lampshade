@@ -171,13 +171,11 @@ func (d *dialer) Dial() (net.Conn, error) {
 
 func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	s, err := d.getSession(ctx)
+	go d.recycleSession(s)
 	if err != nil {
 		return nil, err
 	}
-	c := s.createStream(ctx)
-	go d.recycleSession(s)
-
-	return c, nil
+	return s.createStream(ctx), nil
 }
 
 func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
