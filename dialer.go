@@ -260,6 +260,7 @@ func (d *dialer) startSession(rs *sessionConfig) (*session, error) {
 		d.emaRTT, nil, nil, rs, lc)
 
 	if err != nil {
+		s.Close()
 		lc.OnSessionError(err, err)
 	} else {
 		lc.OnSessionInit()
