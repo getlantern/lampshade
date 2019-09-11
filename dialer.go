@@ -174,9 +174,6 @@ func (d *dialer) trySession(sc *sessionConfig) {
 }
 
 func (d *dialer) recycleSession(s sessionIntf) {
-	if s == nil {
-		return
-	}
 	if !s.allowNewStream(d.maxStreamsPerConn) {
 		log.Debugf("Maximum streams reached for session to %v", d.name)
 		// The default number of streams per session is 65535, so this is unlikely to be reached. If it is, we create
@@ -203,10 +200,13 @@ func (d *dialer) Dial() (net.Conn, error) {
 
 func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	s, err := d.getSession(ctx)
-	go d.recycleSession(s)
 	if err != nil {
+		// If we continually can't get sessions, eventually sessionRequests will fill up. Make sure
+		// we drain it on errors.
+		<-d.sessionRequests
 		return nil, err
 	}
+	go d.recycleSession(s)
 	return s.createStream(ctx), nil
 }
 
