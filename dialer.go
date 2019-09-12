@@ -5,13 +5,18 @@ import (
 	"crypto/rsa"
 	"fmt"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/getlantern/ema"
 	"github.com/getlantern/ops"
 )
 
-var defaultDialTimeout = 30 * time.Second
+const (
+	defaultIdleInterval    = 30 * time.Second
+	defaultSlowDialTimeout = 30 * time.Second
+	defaultFastDialTimeout = 5 * time.Second
+)
 
 // DialerOpts configures options for creating Dialers
 type DialerOpts struct {
@@ -21,13 +26,19 @@ type DialerOpts struct {
 	// MaxPadding - maximum random padding to use when necessary.
 	MaxPadding int
 
-	// LiveConns is the number of live connections to maintain to the server.
-	// Defaults to 2.
-	LiveConns int
-
 	// MaxStreamsPerConn - limits the number of streams per physical connection.
 	//                     If 0, defaults to max uint16.
 	MaxStreamsPerConn uint16
+
+	// IdleInterval - If we haven't dialed any new connections within this
+	//                interval, open a new physical connection on the next dial.
+	IdleInterval time.Duration
+
+	// SlowDialTimeout governs the timeout for the slow dialer
+	SlowDialTimeout time.Duration
+
+	// FastDialTimeout governs the timeout for the fast dialer
+	FastDialTimeout time.Duration
 
 	// PingInterval - how frequently to ping to calculate RTT, set to 0 to disable
 	PingInterval time.Duration
@@ -55,17 +66,20 @@ type dialer struct {
 	windowSize        int
 	maxPadding        int
 	maxStreamsPerConn uint16
+	idleInterval      time.Duration
 	pingInterval      time.Duration
 	pool              BufferPool
 	cipherCode        Cipher
 	serverPublicKey   *rsa.PublicKey
-	liveSessions      chan sessionIntf
-	pendingSessions   chan *sessionConfig
-	sessionRequests   chan bool
+	currentSession    chan *session
+	pendingSessions   chan *session
+	sessionRequested  chan bool
 	emaRTT            *ema.EMA
 	dial              DialFN
 	lifecyle          ClientLifecycleListener
 	name              string
+	closed            chan interface{}
+	closeOnce         sync.Once
 }
 
 // NewDialer wraps the given dial function with support for lampshade. The
@@ -81,17 +95,25 @@ func NewDialer(opts *DialerOpts) Dialer {
 	if opts.WindowSize <= 0 {
 		opts.WindowSize = defaultWindowSize
 	}
-	if opts.LiveConns <= 0 {
-		opts.LiveConns = 2
+	if opts.IdleInterval <= 0 {
+		opts.IdleInterval = defaultIdleInterval
 	}
 	if opts.MaxStreamsPerConn == 0 || opts.MaxStreamsPerConn > maxID {
 		opts.MaxStreamsPerConn = maxID
 	}
-	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   liveConns: %v  maxStreamsPerConn: %v   pingInterval: %v   cipher: %v",
+	if opts.SlowDialTimeout == 0 {
+		opts.SlowDialTimeout = defaultSlowDialTimeout
+	}
+	if opts.FastDialTimeout == 0 {
+		opts.FastDialTimeout = defaultFastDialTimeout
+	}
+
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   slowDialTimeout: %v   fastDialTimeout: %v   pingInterval: %v   cipher: %v",
 		opts.WindowSize,
 		opts.MaxPadding,
-		opts.LiveConns,
 		opts.MaxStreamsPerConn,
+		opts.SlowDialTimeout,
+		opts.FastDialTimeout,
 		opts.PingInterval,
 		opts.Cipher)
 	var lc ClientLifecycleListener
@@ -103,87 +125,51 @@ func NewDialer(opts *DialerOpts) Dialer {
 
 	// We allow more than LiveConns here to accommodate the rare case that individual sessions
 	// fill up with streams, and we need more.
-	maxConns := opts.LiveConns * 2
 	d := &dialer{
 		windowSize:        opts.WindowSize,
 		maxPadding:        opts.MaxPadding,
 		maxStreamsPerConn: opts.MaxStreamsPerConn,
+		idleInterval:      opts.IdleInterval,
 		pingInterval:      opts.PingInterval,
 		pool:              opts.Pool,
 		cipherCode:        opts.Cipher,
 		serverPublicKey:   opts.ServerPublicKey,
-		liveSessions:      make(chan sessionIntf, maxConns),
+		currentSession:    make(chan *session, 1),
+		pendingSessions:   make(chan *session),
+		sessionRequested:  make(chan bool, 1),
 		emaRTT:            ema.NewDuration(0, 0.5),
 		dial:              opts.Dial,
-		pendingSessions:   make(chan *sessionConfig, maxConns),
-		sessionRequests:   make(chan bool, 10),
 		lifecyle:          lc,
 		name:              opts.Name,
+		closed:            make(chan interface{}),
 	}
+
 	d.lifecyle.OnStart()
-	for i := 0; i < opts.LiveConns-1; i++ {
-		d.pendingSessions <- &sessionConfig{
-			name:         "background to " + d.name,
-			dialTimeout:  defaultDialTimeout,
-			sleepOnError: 2 * time.Second,
-		}
-	}
-
-	// We create another background session with a shorter dial timeout to ensure liveness in the case of network
-	// disruptions.
-	d.pendingSessions <- &sessionConfig{
-		name:         "liveness to " + d.name,
-		dialTimeout:  5 * time.Second,
-		sleepOnError: 1 * time.Second,
-	}
-	ops.Go(d.maintainTCPConnections)
+	d.requestSession() // request an initial value for current session
+	ops.Go(func() {
+		op := ops.Begin("maintain_current_session").
+			Set("dialer_name", opts.Name).
+			Set("idle_interval", opts.IdleInterval)
+		defer op.End()
+		d.maintainCurrentSession()
+	})
+	ops.Go(func() {
+		// Start some sessions using a slow dial timeout to remain tolerant of poor network latency
+		op := ops.Begin("start_sessions_slow_dial").
+			Set("dialer_name", opts.Name).
+			Set("idle_interval", opts.IdleInterval)
+		defer op.End()
+		d.startSessions(opts.SlowDialTimeout)
+	})
+	ops.Go(func() {
+		// Start some sessions using a fast dial timeout to make sure that we recover quickly from temporary network outages
+		op := ops.Begin("start_sessions_fast_dial").
+			Set("dialer_name", opts.Name).
+			Set("idle_interval", opts.IdleInterval)
+		defer op.End()
+		d.startSessions(opts.FastDialTimeout)
+	})
 	return d
-}
-
-// maintainTCPConnections maintains background TCP connection(s) and associated lampshade session(s)
-func (d *dialer) maintainTCPConnections() {
-	for sc := range d.pendingSessions {
-		d.trySession(sc)
-	}
-}
-
-func (d *dialer) trySession(sc *sessionConfig) {
-	start := time.Now()
-	s, err := d.startSession(sc)
-	if err != nil {
-		log.Debugf("Error starting session '%v': %v", sc.name, err.Error())
-		// Sleeping when there's an error is necessary particularly for the case where the network is down, as this
-		// will then spin endlessly.
-		time.Sleep(sc.sleepOnError)
-		d.pendingSessions <- sc
-	} else {
-		log.Debugf("Created session in %v to %#v", time.Since(start), sc)
-		d.recycleSession(s)
-	}
-}
-
-func (d *dialer) recycleSession(s sessionIntf) {
-	if s == nil {
-		return
-	}
-	if !s.allowNewStream(d.maxStreamsPerConn) {
-		log.Debugf("Maximum streams reached for session to %v", d.name)
-		// The default number of streams per session is 65535, so this is unlikely to be reached. If it is, we create
-		// an additional session with the same configuration as the full session.
-		go func() {
-			d.pendingSessions <- s.getSessionConfig()
-		}()
-	}
-	// We now have a new or established TCP connection/session. At this point two things can happen:
-	// 1) The connection can be closed for any reason, in which case we want to request a new one
-	// 2) A dialer can request the session. In that case, it will retrieve the session.
-	select {
-	case <-s.getCloseCh():
-		log.Debugf("Session closed before requested. Requesting new session: %#v", s.getSessionConfig())
-		d.pendingSessions <- s.getSessionConfig()
-	case <-d.sessionRequests:
-		d.liveSessions <- s
-	}
 }
 
 func (d *dialer) Dial() (net.Conn, error) {
@@ -192,53 +178,107 @@ func (d *dialer) Dial() (net.Conn, error) {
 
 func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	s, err := d.getSession(ctx)
-	go d.recycleSession(s)
 	if err != nil {
 		return nil, err
 	}
 	return s.createStream(ctx), nil
 }
 
-func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
-	d.sessionRequests <- true
+func (d *dialer) EMARTT() time.Duration {
+	return d.emaRTT.GetDuration()
+}
+
+func (d *dialer) getSession(ctx context.Context) (*session, error) {
 	start := time.Now()
 	for {
 		select {
-		case s := <-d.liveSessions:
-			if s.isClosed() {
-				// Closed sessions will trigger the creation of new ones, so keep waiting for a new session.
+		case s := <-d.currentSession:
+			if !s.allowNewStream(d.maxStreamsPerConn, d.idleInterval) {
+				log.Debug("Session doesn't allow new streams, try again")
+				d.requestSession()
 				continue
 			}
+			d.currentSession <- s
 			log.Debugf("Returning session in %v", time.Since(start))
 			return s, nil
 
 		case <-ctx.Done():
-			err := fmt.Errorf("no session available after %v to %v", time.Since(start), d.name)
+			err := fmt.Errorf("No session available after %v to %v", time.Since(start), d.name)
 			return nil, err
 		}
 	}
 }
 
-func (d *dialer) EMARTT() time.Duration {
-	return d.emaRTT.GetDuration()
+func (d *dialer) requestSession() {
+	select {
+	case d.sessionRequested <- true:
+		// okay
+	default:
+		// already have a pending request
+	}
 }
 
-func (d *dialer) startSession(rs *sessionConfig) (*session, error) {
+func (d *dialer) maintainCurrentSession() {
+	defer close(d.currentSession)
+
+	for {
+		select {
+		case <-d.sessionRequested:
+			select {
+			case s := <-d.pendingSessions:
+				// Always set the current session to the first available of the pending sessions
+				d.currentSession <- s
+			case <-d.closed:
+				return
+			}
+		case <-d.closed:
+			return
+		}
+	}
+}
+
+func (d *dialer) startSessions(dialTimeout time.Duration) {
+	for {
+		log.Debug("Starting session")
+		s, err := d.startSession(dialTimeout)
+		if err != nil {
+			log.Errorf("Unable to start session: %v", err)
+			time.Sleep(dialTimeout / 5)
+			select {
+			case <-d.closed:
+				return
+			default:
+				continue
+			}
+		}
+		select {
+		case d.pendingSessions <- s:
+			// session was grabbed before we idled
+		case <-time.After(d.idleInterval):
+			// session idled before it could be used, discard
+			s.Close()
+		case <-d.closed:
+			return
+		}
+	}
+}
+
+func (d *dialer) startSession(dialTimeout time.Duration) (*session, error) {
 	lc := d.lifecyle.OnTCPStart()
 	cs, err := newCryptoSpec(d.cipherCode)
 	if err != nil {
 		lc.OnSessionError(err, err)
-		return nil, fmt.Errorf("unable to create crypto spec for %v: %v", d.cipherCode, err)
+		return nil, fmt.Errorf("Unable to create crypto spec for %v: %v", d.cipherCode, err)
 	}
 
 	// Generate the client init message
 	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, cs)
 	if err != nil {
 		lc.OnSessionError(err, err)
-		return nil, fmt.Errorf("unable to generate client init message: %v", err)
+		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
 
-	conn, err := d.dial(rs.dialTimeout)
+	conn, err := d.dial(dialTimeout)
 	if err != nil {
 		lc.OnTCPConnectionError(err)
 		return nil, err
@@ -246,12 +286,28 @@ func (d *dialer) startSession(rs *sessionConfig) (*session, error) {
 	lc.OnTCPEstablished(conn)
 
 	s, err := startSession(conn, d.windowSize, d.maxPadding, false, d.pingInterval, cs, clientInitMsg, d.pool,
-		d.emaRTT, nil, nil, rs, lc)
+		d.emaRTT, nil, func(s *session) {
+			cs := <-d.currentSession
+			if cs == s {
+				log.Debug("Discarding current session on close")
+				d.requestSession()
+			} else {
+				d.currentSession <- cs
+			}
+		}, lc)
 
 	if err != nil {
+		conn.Close()
 		lc.OnSessionError(err, err)
 	} else {
 		lc.OnSessionInit()
 	}
 	return s, err
+}
+
+func (d *dialer) Close() error {
+	d.closeOnce.Do(func() {
+		close(d.closed)
+	})
+	return nil
 }

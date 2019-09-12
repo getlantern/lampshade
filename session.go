@@ -48,15 +48,6 @@ func trackStats() {
 	})
 }
 
-type sessionIntf interface {
-	allowNewStream(maxStreamPerConn uint16) bool
-	createStream(context.Context) *stream
-	isClosed() bool
-
-	getSessionConfig() *sessionConfig
-	getCloseCh() chan struct{}
-}
-
 // session encapsulates the multiplexing of streams onto a single "physical"
 // net.Conn.
 type session struct {
@@ -85,8 +76,8 @@ type session struct {
 	closeCh          chan struct{}
 	closeOnce        sync.Once
 	nextID           uint32
+	lastDialed       time.Time
 	mx               sync.RWMutex
-	sessionConfig    *sessionConfig
 	lifecycle        SessionLifecycleListener
 }
 
@@ -97,7 +88,7 @@ type session struct {
 // with the first frame sent in this session.
 func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration,
 	cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session),
-	sc *sessionConfig, lifecycle SessionLifecycleListener) (*session, error) {
+	lifecycle SessionLifecycleListener) (*session, error) {
 	s := &session{
 		Conn:             conn,
 		windowSize:       windowSize,
@@ -118,7 +109,7 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 		connCh:           connCh,
 		beforeClose:      beforeClose,
 		closeCh:          make(chan struct{}),
-		sessionConfig:    sc,
+		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
 		lifecycle:        lifecycle,
 	}
 	var err error
@@ -133,10 +124,6 @@ func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool
 	ops.Go(s.sendLoop)
 	ops.Go(s.recvLoop)
 	return s, nil
-}
-
-func (s *session) getSessionConfig() *sessionConfig {
-	return s.sessionConfig
 }
 
 func (s *session) getCloseCh() chan struct{} {
@@ -159,7 +146,7 @@ func (s *session) recvLoop() {
 	stoppedOnExpectedEOF := false
 
 	defer func() {
-		log.Debugf("Closing lampshade TCP connection: %#v", s.sessionConfig)
+		log.Debug("Closing lampshade TCP connection")
 		closeErr := s.Conn.Close()
 		s.lifecycle.OnTCPClosed()
 		if closeErr != nil {
@@ -168,7 +155,7 @@ func (s *session) recvLoop() {
 				// Closing an idled connection is expected to fail, so don't bother
 				// logging the error.
 			} else {
-				log.Errorf("Unexpected error closing underlying connection to %#v: %v", s.sessionConfig, closeErr)
+				log.Errorf("Unexpected error closing underlying connection: %v", closeErr)
 			}
 		}
 		atomic.AddInt64(&recvLoops, -1)
@@ -194,7 +181,7 @@ func (s *session) recvLoop() {
 				return err
 			}
 			if s.isClosed() {
-				log.Debugf("recvLoop detected session closed to %#v", s.sessionConfig)
+				log.Debug("recvLoop detected session closed")
 				return io.EOF
 			}
 			b = b[n:]
@@ -325,7 +312,7 @@ func (s *session) recvLoop() {
 			c, open := s.getOrCreateStream(context.Background(), id)
 			if !open {
 				if !alreadyLoggedReceiveForClosedStream[id] {
-					log.Debugf("Received data for closed stream %d to %#v", id, s.sessionConfig)
+					log.Debugf("Received data for closed stream %d", id)
 					alreadyLoggedReceiveForClosedStream[id] = true
 				}
 				// Stream was already closed, ignore
@@ -544,13 +531,13 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	if readErr == nil {
 		readErr = ErrBrokenPipe
 	} else if readErr != io.EOF {
-		log.Errorf("Error on reading from %#v: %v", s.sessionConfig, readErr)
+		log.Errorf("Error on reading: %v", readErr)
 	}
 
 	if writeErr == nil {
 		writeErr = ErrBrokenPipe
 	} else {
-		log.Errorf("Error on writing to %#v: %v", s.sessionConfig, writeErr)
+		log.Errorf("Error on writing: %v", writeErr)
 	}
 
 	for _, c := range streams {
@@ -564,6 +551,7 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 func (s *session) createStream(ctx context.Context) *stream {
 	nextID := atomic.AddUint32(&s.nextID, 1)
 	stream, _ := s.getOrCreateStream(ctx, uint16(nextID-1))
+	s.lastDialed = time.Now()
 	return stream
 }
 
@@ -591,10 +579,18 @@ func (s *session) getOrCreateStream(ctx context.Context, id uint16) (*stream, bo
 
 // allowNewStream returns true if a new stream is allowed to be created over
 // this session, and false otherwise.
-func (s *session) allowNewStream(maxStreamPerConn uint16) bool {
+func (s *session) allowNewStream(maxStreamPerConn uint16, idleInterval time.Duration) bool {
+	if s.isClosed() {
+		return false
+	}
 	nextID := atomic.LoadUint32(&s.nextID)
 	if nextID > uint32(maxStreamPerConn) {
 		log.Debug("Exhausted maximum allowed IDs on one physical connection, will open new connection")
+		return false
+	}
+	now := time.Now()
+	if now.Sub(s.lastDialed) > idleInterval {
+		log.Debugf("No new connections in %v, will start new session", idleInterval)
 		return false
 	}
 	return true

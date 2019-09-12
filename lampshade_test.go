@@ -1,6 +1,7 @@
 package lampshade
 
 import (
+	"context"
 	"crypto/rsa"
 	"crypto/tls"
 	"io"
@@ -71,6 +72,7 @@ func TestWriteSplitting(t *testing.T) {
 		return
 	}
 	defer l.Close()
+	defer dialer.Close()
 
 	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
@@ -109,6 +111,7 @@ func TestStreamCloseRemoteAfterEcho(t *testing.T) {
 		return
 	}
 	defer l.Close()
+	defer dialer.Close()
 
 	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
@@ -142,11 +145,12 @@ func TestStreamCloseRemoteAfterEcho(t *testing.T) {
 }
 
 func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
-	l, dialer, _, err := echoServerAndDialer(0)
+	l, dialer, _, err := echoServerAndDialerWithIdleInterval(0, 0, 2*time.Second)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
+	defer dialer.Close()
 
 	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
@@ -168,7 +172,9 @@ func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
 	assert.Equal(t, ErrBrokenPipe, err)
 
 	// Now dial again and make sure that works
-	conn, err = dialer.Dial()
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	conn, err = dialer.DialContext(ctx)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -192,6 +198,7 @@ func TestStreamCloseLocalPrematurely(t *testing.T) {
 		return
 	}
 	defer l.Close()
+	defer dialer.Close()
 
 	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
@@ -242,6 +249,7 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 		return
 	}
 	defer l.Close()
+	defer dialer.Close()
 
 	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
@@ -280,11 +288,12 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 
 func TestConnIDExhaustion(t *testing.T) {
 	max := 100
-	l, dialer, _, err := echoServerAndDialerWithIdleInterval(uint16(max), 0, 50*time.Millisecond)
+	l, dialer, _, err := echoServerAndDialerWithIdleInterval(uint16(max), 0, 0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
+	defer dialer.Close()
 
 	var streams []net.Conn
 	closeStreams := func() {
@@ -399,6 +408,7 @@ func doTestConnBasicFlow(t *testing.T) {
 		return
 	}
 	defer l.Close()
+	defer dialer.Close()
 
 	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
@@ -454,6 +464,7 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification
 		WindowSize:        windowSize,
 		MaxPadding:        maxPadding,
 		MaxStreamsPerConn: maxStreamsPerConn,
+		IdleInterval:      idleInterval,
 		PingInterval:      testPingInterval,
 		Pool:              pool,
 		Cipher:            AES128GCM,
@@ -674,7 +685,7 @@ func TestConcurrency(t *testing.T) {
 		}
 	}()
 
-	dial := NewDialer(
+	dialer := NewDialer(
 		&DialerOpts{
 			WindowSize:      windowSize,
 			MaxPadding:      maxPadding,
@@ -684,7 +695,9 @@ func TestConcurrency(t *testing.T) {
 			Dial: func(time.Duration) (net.Conn, error) {
 				return net.Dial("tcp", lst.Addr().String())
 			},
-		}).Dial
+		})
+	defer dialer.Close()
+	dial := dialer.Dial
 
 	var wg sync.WaitGroup
 	wg.Add(concurrency)
@@ -763,7 +776,7 @@ func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
 	}
 	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA(), true)
 
-	conn, err := NewDialer(&DialerOpts{
+	dialer := NewDialer(&DialerOpts{
 		WindowSize:      25,
 		MaxPadding:      maxPadding,
 		Pool:            NewBufferPool(100),
@@ -772,7 +785,9 @@ func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
 		Dial: func(time.Duration) (net.Conn, error) {
 			return net.Dial("tcp", lst.Addr().String())
 		},
-	}).Dial()
+	})
+	defer dialer.Close()
+	conn, err := dialer.Dial()
 	if err != nil {
 		b.Fatal(err)
 	}

@@ -305,6 +305,9 @@ type Dialer interface {
 
 	// DialContext is the same as Dial but with the specific context.
 	DialContext(ctx context.Context) (net.Conn, error)
+
+	// Close closes any background processing happening with this dialer
+	Close() error
 }
 
 // Session is a wrapper around a net.Conn that supports multiplexing.
@@ -408,18 +411,6 @@ func echo() []byte {
 	echo := make([]byte, pingFrameSize)
 	echo[tsSize] = frameTypeEcho
 	return echo
-}
-
-type sessionConfig struct {
-	name         string
-	dialTimeout  time.Duration
-	sleepOnError time.Duration
-}
-
-func newNoopSession() *sessionConfig {
-	return &sessionConfig{
-		name: "noop",
-	}
 }
 
 func newErrTimeout(msg string) net.Error {

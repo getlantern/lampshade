@@ -18,6 +18,8 @@ github.com/getlantern/ema v0.0.0-20190620044903-5943d28f40e4 h1:PMK8QQn9GLTQXdHn
 github.com/getlantern/ema v0.0.0-20190620044903-5943d28f40e4/go.mod h1:tzRwT19aDrWSr6yRDs8iOvaXXCau96EgWsgGT9wIpoQ=
 github.com/getlantern/errors v0.0.0-20190325191628-abdb3e3e36f7 h1:6uJ+sZ/e03gkbqZ0kUG6mfKoqDb4XMAzMIwlajq19So=
 github.com/getlantern/errors v0.0.0-20190325191628-abdb3e3e36f7/go.mod h1:l+xpFBrCtDLpK9qNjxs+cHU6+BAdlBaxHqikB6Lku3A=
+github.com/getlantern/eventual v0.0.0-20180125201821-84b02499361b h1:re/zIJk8bd7yyUet+QiRRRIoagh1EJQ3CvV2XGPQe5s=
+github.com/getlantern/eventual v0.0.0-20180125201821-84b02499361b/go.mod h1:O8T3zFEcY6+LRXFcVV4q8mEu2tDIixG8edC84DfswBc=
 github.com/getlantern/fdcount v0.0.0-20170105153814-6a6cb5839bc5 h1:8Q9iN/V24EG01IgXEKVScth/rTXpplBxCYio/yIKtUw=
 github.com/getlantern/fdcount v0.0.0-20170105153814-6a6cb5839bc5/go.mod h1:XZwE+iIlAgr64OFbXKFNCllBwV4wEipPx8Hlo2gZdbM=
 github.com/getlantern/filepersist v0.0.0-20160317154340-c5f0cd24e799 h1:FhkPUYCQYmoxS02r2GRrIV7dahUIncRl36xzs3/mnjA=
