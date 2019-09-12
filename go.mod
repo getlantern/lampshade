@@ -11,7 +11,7 @@ require (
 	github.com/getlantern/elevate v0.0.0-20180207094634-c2e2e4901072 // indirect
 	github.com/getlantern/ema v0.0.0-20190620044903-5943d28f40e4
 	github.com/getlantern/eventual v0.0.0-20180125201821-84b02499361b
-	github.com/getlantern/fdcount v0.0.0-20170105153814-6a6cb5839bc5
+	github.com/getlantern/fdcount v0.0.0-20190912142506-f89afd7367c4
 	github.com/getlantern/filepersist v0.0.0-20160317154340-c5f0cd24e799 // indirect
 	github.com/getlantern/golog v0.0.0-20190809085441-26e09e6dd330
 	github.com/getlantern/idletiming v0.0.0-20190529182719-d2fbc83372a5

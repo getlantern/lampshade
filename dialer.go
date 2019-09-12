@@ -71,6 +71,7 @@ type dialer struct {
 	pool              BufferPool
 	cipherCode        Cipher
 	serverPublicKey   *rsa.PublicKey
+	currentSessionMX  sync.Mutex
 	currentSession    chan *session
 	pendingSessions   chan *session
 	sessionRequested  chan bool
@@ -108,12 +109,13 @@ func NewDialer(opts *DialerOpts) Dialer {
 		opts.FastDialTimeout = defaultFastDialTimeout
 	}
 
-	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   slowDialTimeout: %v   fastDialTimeout: %v   pingInterval: %v   cipher: %v",
+	log.Debugf("Initializing Dialer with   windowSize: %v   maxPadding: %v   maxStreamsPerConn: %v   slowDialTimeout: %v   fastDialTimeout: %v   idleInterval: %v    pingInterval: %v   cipher: %v",
 		opts.WindowSize,
 		opts.MaxPadding,
 		opts.MaxStreamsPerConn,
 		opts.SlowDialTimeout,
 		opts.FastDialTimeout,
+		opts.IdleInterval,
 		opts.PingInterval,
 		opts.Cipher)
 	var lc ClientLifecycleListener
@@ -193,12 +195,12 @@ func (d *dialer) getSession(ctx context.Context) (*session, error) {
 	for {
 		select {
 		case s := <-d.currentSession:
-			if !s.allowNewStream(d.maxStreamsPerConn, d.idleInterval) {
+			if !s.allowNewStream(d.maxStreamsPerConn) {
 				log.Debug("Session doesn't allow new streams, try again")
 				d.requestSession()
 				continue
 			}
-			d.currentSession <- s
+			d.setCurrentSession(s)
 			log.Debugf("Returning session in %v", time.Since(start))
 			return s, nil
 
@@ -219,7 +221,11 @@ func (d *dialer) requestSession() {
 }
 
 func (d *dialer) maintainCurrentSession() {
-	defer close(d.currentSession)
+	defer func() {
+		d.currentSessionMX.Lock()
+		close(d.currentSession)
+		d.currentSessionMX.Unlock()
+	}()
 
 	for {
 		select {
@@ -227,7 +233,7 @@ func (d *dialer) maintainCurrentSession() {
 			select {
 			case s := <-d.pendingSessions:
 				// Always set the current session to the first available of the pending sessions
-				d.currentSession <- s
+				d.setCurrentSession(s)
 			case <-d.closed:
 				return
 			}
@@ -251,11 +257,12 @@ func (d *dialer) startSessions(dialTimeout time.Duration) {
 				continue
 			}
 		}
+		log.Debug("Started session")
 		select {
 		case d.pendingSessions <- s:
-			// session was grabbed before we idled
+			log.Debug("Session accepted")
 		case <-time.After(d.idleInterval):
-			// session idled before it could be used, discard
+			log.Debug("Session idled before use, discarding")
 			s.Close()
 		case <-d.closed:
 			return
@@ -292,7 +299,7 @@ func (d *dialer) startSession(dialTimeout time.Duration) (*session, error) {
 				log.Debug("Discarding current session on close")
 				d.requestSession()
 			} else {
-				d.currentSession <- cs
+				d.setCurrentSession(cs)
 			}
 		}, lc)
 
@@ -303,6 +310,18 @@ func (d *dialer) startSession(dialTimeout time.Duration) (*session, error) {
 		lc.OnSessionInit()
 	}
 	return s, err
+}
+
+func (d *dialer) setCurrentSession(s *session) {
+	d.currentSessionMX.Lock()
+	select {
+	case <-d.closed:
+		log.Debug("Dialer closed, discarding session")
+	default:
+		d.currentSession <- s
+		// okay
+	}
+	d.currentSessionMX.Unlock()
 }
 
 func (d *dialer) Close() error {
