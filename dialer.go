@@ -68,7 +68,6 @@ type dialer struct {
 	serverPublicKey   *rsa.PublicKey
 	liveSessions      chan sessionIntf
 	pendingSessions   chan *sessionConfig
-	sessionRequests   chan bool
 	emaRTT            *ema.EMA
 	dial              DialFN
 	lifecyle          ClientLifecycleListener
@@ -108,9 +107,6 @@ func NewDialer(opts *DialerOpts) Dialer {
 		lc = NoopClientLifecycleListener()
 	}
 
-	// We allow more than LiveConns here to accommodate the rare case that individual sessions
-	// fill up with streams, and we need more.
-	maxConns := opts.LiveConns * 2
 	d := &dialer{
 		windowSize:        opts.WindowSize,
 		maxPadding:        opts.MaxPadding,
@@ -119,11 +115,10 @@ func NewDialer(opts *DialerOpts) Dialer {
 		pool:              opts.Pool,
 		cipherCode:        opts.Cipher,
 		serverPublicKey:   opts.ServerPublicKey,
-		liveSessions:      make(chan sessionIntf, maxConns),
+		liveSessions:      make(chan sessionIntf),
 		emaRTT:            ema.NewDuration(0, 0.5),
 		dial:              opts.Dial,
-		pendingSessions:   make(chan *sessionConfig, maxConns),
-		sessionRequests:   make(chan bool, 10),
+		pendingSessions:   make(chan *sessionConfig),
 		lifecyle:          lc,
 		name:              opts.Name,
 		log:               golog.LoggerFor("lampshade-dialer"),
@@ -182,20 +177,19 @@ func (d *dialer) recycleSession(s sessionIntf) {
 		d.log.Debugf("Maximum streams reached for session to %v", d.name)
 		// The default number of streams per session is 65535, so this is unlikely to be reached. If it
 		// is, we create an additional session with the same configuration as the full session.
-		go func() {
-			d.pendingSessions <- s.getSessionConfig()
-		}()
+		d.pendingSessions <- s.getSessionConfig()
 		return
 	}
 	// We now have a new or established TCP connection/session. At this point two things can happen:
 	// 1) The connection can be closed for any reason, in which case we want to request a new one
 	// 2) A dialer can request the session. In that case, it will retrieve the session.
+	//
+	// Selecting on those two cases avoids closed sessions building up in the live session channel.
 	select {
 	case <-s.getCloseCh():
 		d.log.Debugf("Session closed before requested. Requesting new session: %#v", s.getSessionConfig())
 		d.pendingSessions <- s.getSessionConfig()
-	case <-d.sessionRequests:
-		d.liveSessions <- s
+	case d.liveSessions <- s:
 	}
 }
 
@@ -206,9 +200,6 @@ func (d *dialer) Dial() (net.Conn, error) {
 func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 	s, err := d.getSession(ctx)
 	if err != nil {
-		// If we continually can't get sessions, eventually sessionRequests will fill up. Make sure
-		// we drain it on errors.
-		<-d.sessionRequests
 		return nil, err
 	}
 	go d.recycleSession(s)
@@ -216,7 +207,6 @@ func (d *dialer) DialContext(ctx context.Context) (net.Conn, error) {
 }
 
 func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
-	d.sessionRequests <- true
 	start := time.Now()
 	for {
 		select {
