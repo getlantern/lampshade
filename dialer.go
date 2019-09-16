@@ -131,6 +131,7 @@ func NewDialer(opts *DialerOpts) Dialer {
 		opts.PingInterval,
 		opts.Cipher)
 	d.lifecyle.OnStart()
+	ops.Go(d.maintainTCPConnections)
 	for i := 0; i < opts.LiveConns-1; i++ {
 		d.pendingSessions <- &sessionConfig{
 			name:         "background to " + d.name,
@@ -146,7 +147,6 @@ func NewDialer(opts *DialerOpts) Dialer {
 		dialTimeout:  time.Duration(opts.ShortDialTimeout) * time.Second,
 		sleepOnError: 1 * time.Second,
 	}
-	ops.Go(d.maintainTCPConnections)
 	return d
 }
 
