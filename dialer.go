@@ -216,7 +216,6 @@ func (d *dialer) getSession(ctx context.Context) (sessionIntf, error) {
 				d.log.Debugf("Found closed session. Continuing")
 				continue
 			}
-			d.log.Debugf("Returning session in %v", time.Since(start))
 			return s, nil
 
 		case <-ctx.Done():
