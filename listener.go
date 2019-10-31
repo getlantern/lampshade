@@ -3,11 +3,14 @@ package lampshade
 import (
 	"crypto/rsa"
 	"io"
+	"io/ioutil"
 	"net"
 	"time"
 
 	"github.com/getlantern/ops"
 )
+
+const defaultInitMsgTimeout = 5 * time.Second
 
 type listener struct {
 	wrapped          net.Listener
@@ -17,6 +20,17 @@ type listener struct {
 	onError          func(conn net.Conn, err error)
 	errCh            chan error
 	connCh           chan net.Conn
+
+	// initMsgTimeout controls how long the listener will wait before responding to bad client init
+	// messages. This applies in 3 situations:
+	//   1. The client has sent some, but not all of the init message. This situation is salvagable
+	//      if the client sends the remainder of the init message.
+	//   2. The client sends an init message of the proper length, but we fail to decode it.
+	//   3. The client sends an init message that is too long.
+	// It is important that each situation be indistinguishable to a client. This is to avoid
+	// leaking information to probes (from bad actors) that we have a fixed-size init message. Our
+	// approach is to always close the connection after the init message timeout has elapsed.
+	initMsgTimeout time.Duration
 }
 
 // WrapListener wraps the given listener with support for multiplexing. Only
@@ -44,6 +58,7 @@ func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.P
 // WrapListenerIncludingErrorHandler is like WrapListener and also supports a
 // callback for errors on accepting new connections.
 func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error)) net.Listener {
+
 	if onError == nil {
 		onError = func(net.Conn, error) {}
 	}
@@ -57,6 +72,7 @@ func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, se
 		onError:          onError,
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
+		initMsgTimeout:   defaultInitMsgTimeout,
 	}
 	ops.Go(l.process)
 	trackStats()
@@ -120,22 +136,36 @@ func (l *listener) onConn(conn net.Conn) {
 }
 
 func (l *listener) doOnConn(conn net.Conn) error {
-	start := time.Now()
-	// Read client init msg
-	initMsg := make([]byte, clientInitSize)
-	// Try to read start sequence
+	// We always wait for l.initMsgTimeout before responding to bad init messages. See
+	// listener.initMsgTimeout for more detail.
+
+	var (
+		start             = time.Now()
+		readDeadline      = start.Add(l.initMsgTimeout)
+		clearReadDeadline = func(c net.Conn) { c.SetReadDeadline(time.Time{}) }
+		initMsg           = make([]byte, clientInitSize)
+	)
+
+	conn.SetReadDeadline(readDeadline)
 	_, err := io.ReadFull(conn, initMsg)
 	if err != nil {
 		fullErr := log.Errorf("Unable to read client init msg %v after %v from %v ", err, time.Since(start), conn.RemoteAddr())
+		time.Sleep(time.Until(readDeadline))
+		clearReadDeadline(conn)
 		l.onError(conn, fullErr)
 		return fullErr
 	}
+
 	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	if err != nil {
 		fullErr := log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+		// Continue reading from the peer until the read deadline.
+		io.Copy(ioutil.Discard, conn)
+		clearReadDeadline(conn)
 		l.onError(conn, fullErr)
 		return fullErr
 	}
+	clearReadDeadline(conn)
 	startSession(conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
 	return nil
 }
