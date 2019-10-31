@@ -3,6 +3,7 @@ package lampshade
 import (
 	"crypto/rsa"
 	"crypto/tls"
+	"flag"
 	"io"
 	"math/rand"
 	"net"
@@ -18,8 +19,10 @@ import (
 	"github.com/getlantern/bytecounting"
 	"github.com/getlantern/fdcount"
 	"github.com/getlantern/keyman"
+	"github.com/getlantern/probe"
 	"github.com/getlantern/tlsdefaults"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -29,7 +32,13 @@ const (
 	maxPadding = 32
 
 	testPingInterval = 15 * time.Millisecond
+
+	// Set to true to run the active probing test (likely requires root permissions). Alternatively,
+	// use the force-probe flag.
+	runProbeTest = false
 )
+
+var forceProbeTest = flag.Bool("force-probe", runProbeTest, "causes the active probing test to run (likely requires root)")
 
 func init() {
 	ReadTimeout = 500 * time.Millisecond
@@ -710,6 +719,43 @@ func feed(t *testing.T, conn net.Conn) {
 			t.Fatal("Unable to feed")
 		}
 	}
+}
+
+// TestActiveProbing tests whether active probes can find evidence of randomized transport.
+func TestActiveProbing(t *testing.T) {
+	flag.Parse()
+	if !*forceProbeTest {
+		t.SkipNow()
+	}
+
+	pk, err := keyman.GeneratePK(2048)
+	require.NoError(t, err)
+
+	l, wg, err := echoServer(NewBufferPool(100), false, pk.RSA(), 0)
+	require.NoError(t, err)
+	defer wg.Wait()
+	defer l.Close()
+
+	// This just makes the test faster.
+	l.(*listener).initMsgTimeout = 100 * time.Millisecond
+
+	results, err := probe.ForRandomizedTransport(probe.Config{
+		Network:         "tcp",
+		Address:         l.Addr().String(),
+		Logger:          testLogger{t},
+		ResponseTimeout: time.Minute, // the amount of time the probe waits before giving up on a response
+	})
+	require.NoError(t, err)
+	require.False(t, results.Success, results.Explanation)
+}
+
+type testLogger struct {
+	t *testing.T
+}
+
+func (tl testLogger) Write(b []byte) (n int, err error) {
+	tl.t.Logf("\n%s", string(b))
+	return len(b), nil
 }
 
 func BenchmarkThroughputLampshadeNoEncryption(b *testing.B) {
