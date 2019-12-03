@@ -12,6 +12,8 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+var newSecret = _newSecret
+
 // Cipher specifies a stream cipher
 type Cipher byte
 
@@ -139,7 +141,7 @@ func (cs *cryptoSpec) crypters() (metaEncrypt func([]byte), dataEncrypt func([]b
 	return
 }
 
-func newSecret() ([]byte, error) {
+func _newSecret() ([]byte, error) {
 	secret := make([]byte, maxSecretSize)
 	_, err := rand.Read(secret)
 	if err != nil {

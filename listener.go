@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/getlantern/ops"
+	lru "github.com/hashicorp/golang-lru"
 )
 
 const defaultInitMsgTimeout = 5 * time.Second
@@ -31,6 +32,8 @@ type listener struct {
 	// leaking information to probes (from bad actors) that we have a fixed-size init message. Our
 	// approach is to always close the connection after the init message timeout has elapsed.
 	initMsgTimeout time.Duration
+
+	keyCache *lru.Cache
 }
 
 // WrapListener wraps the given listener with support for multiplexing. Only
@@ -58,6 +61,12 @@ func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.P
 // WrapListenerIncludingErrorHandler is like WrapListener and also supports a
 // callback for errors on accepting new connections.
 func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error)) net.Listener {
+	return WrapListenerRememberingKeys(wrapped, pool, serverPrivateKey, ackOnFirst, 0, onError)
+}
+
+// WrapListenerRememberingKeys is like WrapListenerIncludingErrorHandler and also uses an LRU cache to thwart replays of client init
+// messages.
+func WrapListenerRememberingKeys(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, keyCacheSize int, onError func(net.Conn, error)) net.Listener {
 
 	if onError == nil {
 		onError = func(net.Conn, error) {}
@@ -73,6 +82,12 @@ func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, se
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
 		initMsgTimeout:   defaultInitMsgTimeout,
+	}
+	if keyCacheSize > 0 {
+		l.keyCache, _ = lru.New(keyCacheSize)
+		if l.keyCache != nil {
+			log.Debugf("Caching up to %d keys to prevent replays", keyCacheSize)
+		}
 	}
 	ops.Go(l.process)
 	trackStats()
@@ -157,8 +172,18 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	}
 
 	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
+	var fullErr error
 	if err != nil {
-		fullErr := log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+		fullErr = log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+	} else if l.keyCache != nil {
+		key := string(cs.secret)
+		if l.keyCache.Contains(key) {
+			fullErr = log.Errorf("Detected replay of known secret from %v", conn.RemoteAddr())
+		} else {
+			l.keyCache.Add(key, nil)
+		}
+	}
+	if fullErr != nil {
 		// Continue reading from the peer until the read deadline.
 		io.Copy(ioutil.Discard, conn)
 		clearReadDeadline(conn)

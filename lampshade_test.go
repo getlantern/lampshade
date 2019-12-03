@@ -21,6 +21,7 @@ import (
 	"github.com/getlantern/keyman"
 	"github.com/getlantern/probe"
 	"github.com/getlantern/tlsdefaults"
+	"github.com/getlantern/withtimeout"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -53,7 +54,7 @@ func init() {
 }
 
 func TestConnMultiplex(t *testing.T) {
-	doTestConnBasicFlow(t)
+	testConnBasicFlow(t)
 }
 
 func TestWriteSplitting(t *testing.T) {
@@ -389,13 +390,42 @@ func TestSessionPool(t *testing.T) {
 	t.Logf("%v pyhsical connections in total were dialed", atomic.LoadInt64(&dialed))
 }
 
-func doTestConnBasicFlow(t *testing.T) {
+func TestReplay(t *testing.T) {
+	// Always use the same secret
+	newSecret = func() ([]byte, error) {
+		return make([]byte, maxSecretSize), nil
+	}
+	defer func() {
+		newSecret = _newSecret
+	}()
+
+	pool := NewBufferPool(100)
+	pk, err := keyman.GeneratePK(2048)
+	if err != nil {
+		return
+	}
+	l, wg, err := echoServer(pool, true, pk.RSA(), 0)
+	if err != nil {
+		return
+	}
+
+	d1 := dialerFor(0, 0, pool, pk, l)
+	d2 := dialerFor(0, 0, pool, pk, l)
+	doTestConnBasicFlow(t, l, d1, wg, true)
+	doTestConnBasicFlow(t, l, d2, wg, false)
+}
+
+func testConnBasicFlow(t *testing.T) {
 	l, dialer, wg, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
 	}
 	defer l.Close()
 
+	doTestConnBasicFlow(t, l, dialer, wg, true)
+}
+
+func doTestConnBasicFlow(t *testing.T, l net.Listener, dialer BoundDialer, wg *sync.WaitGroup, expectResponse bool) {
 	conn, err := dialer.Dial()
 	if !assert.NoError(t, err) {
 		return
@@ -412,20 +442,29 @@ func doTestConnBasicFlow(t *testing.T) {
 		return
 	}
 
-	b := make([]byte, len(testdata))
-	n, err = io.ReadFull(conn, b)
-	if !assert.NoError(t, err) {
-		return
-	}
-	if !assert.Equal(t, len(testdata), n) {
-		return
-	}
+	_b, timedOut, err := withtimeout.Do(1*time.Second, func() (interface{}, error) {
+		b := make([]byte, len(testdata))
+		n, err = io.ReadFull(conn, b)
+		return b[:n], err
+	})
 
-	assert.Equal(t, testdata, string(b))
-	conn.Close()
-	wg.Wait()
+	if !expectResponse {
+		assert.True(t, timedOut, "Should have timed out waiting for response that never came")
+	} else {
+		if !assert.NoError(t, err) {
+			return
+		}
 
-	assert.True(t, dialer.EMARTT() > 0)
+		b := _b.([]byte)
+		if !assert.Equal(t, len(testdata), len(b)) {
+			return
+		}
+
+		assert.Equal(t, testdata, string(b))
+		conn.Close()
+		wg.Wait()
+		assert.True(t, dialer.EMARTT() > 0)
+	}
 }
 
 func echoServerAndDialer(maxStreamsPerConn uint16) (net.Listener, BoundDialer, *sync.WaitGroup, error) {
@@ -442,6 +481,11 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification
 	if err != nil {
 		return nil, nil, nil, err
 	}
+
+	return l, dialerFor(maxStreamsPerConn, idleInterval, pool, pk, l), wg, nil
+}
+
+func dialerFor(maxStreamsPerConn uint16, idleInterval time.Duration, pool BufferPool, pk *keyman.PrivateKey, l net.Listener) BoundDialer {
 	doDial := func() (net.Conn, error) {
 		return tls.Dial("tcp", l.Addr().String(), &tls.Config{InsecureSkipVerify: true})
 	}
@@ -456,7 +500,7 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification
 		Cipher:            AES128GCM,
 		ServerPublicKey:   &pk.RSA().PublicKey})
 
-	return l, dialer.BoundTo(doDial), wg, nil
+	return dialer.BoundTo(doDial)
 }
 
 func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey, amplification int) (net.Listener, *sync.WaitGroup, error) {
@@ -476,7 +520,7 @@ func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey,
 		}
 	}
 
-	l := WrapListener(wrapped, pool, serverPrivateKey, false)
+	l := WrapListenerRememberingKeys(wrapped, pool, serverPrivateKey, false, 1, nil)
 
 	var wg sync.WaitGroup
 	go func() {
