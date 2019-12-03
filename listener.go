@@ -4,6 +4,7 @@ import (
 	"crypto/rsa"
 	"io"
 	"io/ioutil"
+	"math"
 	"net"
 	"time"
 
@@ -33,7 +34,8 @@ type listener struct {
 	// approach is to always close the connection after the init message timeout has elapsed.
 	initMsgTimeout time.Duration
 
-	keyCache *lru.Cache
+	keyCache         *lru.Cache
+	maxClientInitAge time.Duration
 }
 
 // WrapListener wraps the given listener with support for multiplexing. Only
@@ -67,9 +69,17 @@ func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, se
 // WrapListenerRememberingKeys is like WrapListenerIncludingErrorHandler and also uses an LRU cache to thwart replays of client init
 // messages.
 func WrapListenerRememberingKeys(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, keyCacheSize int, onError func(net.Conn, error)) net.Listener {
+	return WrapListenerLimitingInitAge(wrapped, pool, serverPrivateKey, ackOnFirst, keyCacheSize, 0, onError)
+}
 
+// WrapListenerLimitingInitAge is like WrapListenerRememberingKeys and also limits the maximum age of client init messages
+func WrapListenerLimitingInitAge(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, keyCacheSize int, maxClientInitAge time.Duration, onError func(net.Conn, error)) net.Listener {
 	if onError == nil {
 		onError = func(net.Conn, error) {}
+	}
+
+	if maxClientInitAge <= 0 {
+		maxClientInitAge = time.Duration(math.MaxInt64)
 	}
 
 	// TODO: add a maxWindowSize
@@ -82,6 +92,7 @@ func WrapListenerRememberingKeys(wrapped net.Listener, pool BufferPool, serverPr
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
 		initMsgTimeout:   defaultInitMsgTimeout,
+		maxClientInitAge: maxClientInitAge,
 	}
 	if keyCacheSize > 0 {
 		l.keyCache, _ = lru.New(keyCacheSize)
@@ -171,10 +182,12 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		return fullErr
 	}
 
-	windowSize, maxPadding, cs, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
+	windowSize, maxPadding, cs, ts, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	var fullErr error
 	if err != nil {
 		fullErr = log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
+	} else if time.Now().Sub(ts) > l.maxClientInitAge {
+		fullErr = log.Errorf("Detected excessively old client init message from %v", conn.RemoteAddr())
 	} else if l.keyCache != nil {
 		key := string(cs.secret)
 		if l.keyCache.Contains(key) {

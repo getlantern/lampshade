@@ -390,7 +390,17 @@ func TestSessionPool(t *testing.T) {
 	t.Logf("%v pyhsical connections in total were dialed", atomic.LoadInt64(&dialed))
 }
 
-func TestReplay(t *testing.T) {
+func TestReplayCache(t *testing.T) {
+	pool := NewBufferPool(100)
+	pk, err := keyman.GeneratePK(2048)
+	if err != nil {
+		return
+	}
+	l, wg, err := echoServer(pool, true, pk.RSA(), 0, 1, 0)
+	if err != nil {
+		return
+	}
+
 	// Always use the same secret
 	newSecret = func() ([]byte, error) {
 		return make([]byte, maxSecretSize), nil
@@ -399,20 +409,60 @@ func TestReplay(t *testing.T) {
 		newSecret = _newSecret
 	}()
 
+	d1 := dialerFor(0, 0, pool, pk, l)
+	d2 := dialerFor(0, 0, pool, pk, l)
+	d3 := dialerFor(0, 0, pool, pk, l)
+	// First connection should succeed
+	doTestConnBasicFlow(t, l, d1, wg, true)
+	// Second should fail
+	doTestConnBasicFlow(t, l, d2, wg, false)
+
+	// Switch back to using random secrets and make sure it works
+	newSecret = _newSecret
+	doTestConnBasicFlow(t, l, d3, wg, true)
+}
+
+func TestReplayTimestamp(t *testing.T) {
 	pool := NewBufferPool(100)
 	pk, err := keyman.GeneratePK(2048)
 	if err != nil {
 		return
 	}
-	l, wg, err := echoServer(pool, true, pk.RSA(), 0)
+	l, wg, err := echoServer(pool, true, pk.RSA(), 0, 0, 5*time.Minute)
 	if err != nil {
 		return
 	}
 
+	ts := time.Now().Add(-5 * time.Hour)
+
+	// Always use the same old
+	initTS = func() time.Time {
+		return ts
+	}
+	defer func() {
+		initTS = time.Now
+	}()
+
 	d1 := dialerFor(0, 0, pool, pk, l)
 	d2 := dialerFor(0, 0, pool, pk, l)
-	doTestConnBasicFlow(t, l, d1, wg, true)
-	doTestConnBasicFlow(t, l, d2, wg, false)
+	// First connection should fail
+	doTestConnBasicFlow(t, l, d1, wg, false)
+
+	// Switch back to using up to date timestamp and make sure it works
+	initTS = time.Now
+	doTestConnBasicFlow(t, l, d2, wg, true)
+}
+
+func TestOldClientsWithoutTimestamp(t *testing.T) {
+	// Always return the epoch, which results in a 0 time in the client init message
+	initTS = func() time.Time {
+		return time.Unix(0, 0)
+	}
+	defer func() {
+		initTS = time.Now
+	}()
+
+	testConnBasicFlow(t)
 }
 
 func testConnBasicFlow(t *testing.T) {
@@ -477,7 +527,7 @@ func echoServerAndDialerWithIdleInterval(maxStreamsPerConn uint16, amplification
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	l, wg, err := echoServer(pool, true, pk.RSA(), amplification)
+	l, wg, err := echoServer(pool, true, pk.RSA(), amplification, 0, 0)
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -503,7 +553,7 @@ func dialerFor(maxStreamsPerConn uint16, idleInterval time.Duration, pool Buffer
 	return dialer.BoundTo(doDial)
 }
 
-func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey, amplification int) (net.Listener, *sync.WaitGroup, error) {
+func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey, amplification int, keyCacheSize int, maxClientInitAge time.Duration) (net.Listener, *sync.WaitGroup, error) {
 	if amplification < 1 {
 		amplification = 1
 	}
@@ -520,7 +570,7 @@ func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey,
 		}
 	}
 
-	l := WrapListenerRememberingKeys(wrapped, pool, serverPrivateKey, false, 1, nil)
+	l := WrapListenerLimitingInitAge(wrapped, pool, serverPrivateKey, false, keyCacheSize, maxClientInitAge, nil)
 
 	var wg sync.WaitGroup
 	go func() {
@@ -600,7 +650,7 @@ func TestPadding(t *testing.T) {
 	if !assert.NoError(t, err) {
 		return
 	}
-	l, wg, err := echoServer(pool, false, pk.RSA(), 1)
+	l, wg, err := echoServer(pool, false, pk.RSA(), 1, 0, 0)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -775,7 +825,7 @@ func TestActiveProbing(t *testing.T) {
 	pk, err := keyman.GeneratePK(2048)
 	require.NoError(t, err)
 
-	l, wg, err := echoServer(NewBufferPool(100), false, pk.RSA(), 0)
+	l, wg, err := echoServer(NewBufferPool(100), false, pk.RSA(), 0, 0, 0)
 	require.NoError(t, err)
 	defer wg.Wait()
 	defer l.Close()

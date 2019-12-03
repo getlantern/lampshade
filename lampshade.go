@@ -69,13 +69,11 @@
 //   To initialize a session, the client sends the below, encrypted using
 //   RSA OAEP using the server's PK:
 //
-//     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
-//     | Version | Win | Max Pad | Cipher | Secret | Send IV1 | Send IV2 | Recv IV1 | Recv IV2 |
-//     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
-//     |    1    |  4  |    1    |    1   |   32   |    12    |    12    |    12    |    12    |
-//     +---------+-----+---------+--------+--------+----------+----------+----------+----------+
-//
-//       Version - the version of the protocol (currently 1)
+//     +-----+---------+--------+--------+----------+----------+----------+----------+----+
+//     | Win | Max Pad | Cipher | Secret | Send IV1 | Send IV2 | Recv IV1 | Recv IV2 | TS |
+//     +-----+---------+--------+--------+----------+----------+----------+----------+----+
+//     |  4  |    1    |    1   |   32   |    12    |    12    |    12    |    12    |  8 |
+//     +-----+---------+--------+--------+----------+----------+----------+----------+----+
 //
 //       Win        - transmit window size in # of frames
 //
@@ -96,6 +94,9 @@
 //       Recv IV1/2 - 96 bits of initialization vector. IV1 is used for
 //                    decrypting the frame length and IV2 is used for decrypting
 //                    the data.
+//
+//       TS         - Optional, this is the timestamp of the client init message
+//                    in seconds since epoch.
 //
 // Session Framing:
 //
@@ -214,13 +215,10 @@ import (
 const (
 	// client init message
 	clientInitSize = 256
-	versionSize    = 1
 	winSize        = 4
 	tsSize         = 8
 	maxSecretSize  = 32
 	metaIVSize     = 12
-
-	protocolVersion1 = 1
 
 	// NoEncryption is no encryption
 	NoEncryption = 1
