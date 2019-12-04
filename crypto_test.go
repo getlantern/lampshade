@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"testing"
+	"time"
 
 	"github.com/Yawning/chacha20"
 	"github.com/getlantern/keyman"
@@ -46,12 +47,13 @@ func doTestInit(t *testing.T, cipherCode Cipher) {
 		return
 	}
 
-	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, cs)
+	ts := time.Now().Truncate(time.Second)
+	msg, err := buildClientInitMsg(publicKey, windowSize, maxPadding, cs, ts)
 	if !assert.NoError(t, err) {
 		return
 	}
 
-	_windowSize, _maxPadding, _cs, err := decodeClientInitMsg(privateKey, msg)
+	_windowSize, _maxPadding, _cs, _ts, err := decodeClientInitMsg(privateKey, msg)
 	if !assert.NoError(t, err) {
 		return
 	}
@@ -63,6 +65,7 @@ func doTestInit(t *testing.T, cipherCode Cipher) {
 	assert.EqualValues(t, cs.dataSendIV, _cs.dataSendIV)
 	assert.EqualValues(t, cs.metaRecvIV, _cs.metaRecvIV)
 	assert.EqualValues(t, cs.dataRecvIV, _cs.dataRecvIV)
+	assert.EqualValues(t, ts, _ts)
 }
 
 func TestCryptoPrototypeNoEncryption(t *testing.T) {

@@ -16,6 +16,8 @@ const (
 	minLiveConns = 1
 )
 
+var initTS = time.Now
+
 // DialerOpts configures options for creating Dialers
 type DialerOpts struct {
 	// WindowSize - transmit window size in # of frames. If <= 0, defaults to 1250.
@@ -95,12 +97,12 @@ func NewDialer(opts *DialerOpts) Dialer {
 		idleInterval:          opts.IdleInterval,
 		pingInterval:          opts.PingInterval,
 		redialSessionInterval: opts.RedialSessionInterval,
-		pool:            opts.Pool,
-		cipherCode:      opts.Cipher,
-		serverPublicKey: opts.ServerPublicKey,
-		liveSessions:    liveSessions,
-		numLive:         1, // the nullSession
-		emaRTT:          ema.NewDuration(0, 0.5),
+		pool:                  opts.Pool,
+		cipherCode:            opts.Cipher,
+		serverPublicKey:       opts.ServerPublicKey,
+		liveSessions:          liveSessions,
+		numLive:               1, // the nullSession
+		emaRTT:                ema.NewDuration(0, 0.5),
 	}
 }
 
@@ -219,7 +221,7 @@ func (d *dialer) startSession(dial DialFN) (*session, error) {
 	}
 
 	// Generate the client init message
-	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, cs)
+	clientInitMsg, err := buildClientInitMsg(d.serverPublicKey, d.windowSize, d.maxPadding, cs, initTS())
 	if err != nil {
 		return nil, fmt.Errorf("Unable to generate client init message: %v", err)
 	}
