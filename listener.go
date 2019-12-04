@@ -186,7 +186,7 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	var fullErr error
 	if err != nil {
 		fullErr = log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
-	} else if time.Now().Sub(ts) > l.maxClientInitAge {
+	} else if !ts.IsZero() && time.Now().Sub(ts) > l.maxClientInitAge {
 		fullErr = log.Errorf("Detected excessively old client init message from %v", conn.RemoteAddr())
 	} else if l.keyCache != nil {
 		key := string(cs.secret)

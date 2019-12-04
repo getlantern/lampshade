@@ -445,12 +445,19 @@ func TestReplayTimestamp(t *testing.T) {
 
 	d1 := dialerFor(0, 0, pool, pk, l)
 	d2 := dialerFor(0, 0, pool, pk, l)
+	d3 := dialerFor(0, 0, pool, pk, l)
 	// First connection should fail
 	doTestConnBasicFlow(t, l, d1, wg, false)
 
+	// Don't include any timestamp in init message and make sure it works (tests support for old clients that don't include a timestamp)
+	initTS = func() time.Time {
+		return time.Time{}
+	}
+	doTestConnBasicFlow(t, l, d2, wg, true)
+
 	// Switch back to using up to date timestamp and make sure it works
 	initTS = time.Now
-	doTestConnBasicFlow(t, l, d2, wg, true)
+	doTestConnBasicFlow(t, l, d3, wg, true)
 }
 
 func TestOldClientsWithoutTimestamp(t *testing.T) {
