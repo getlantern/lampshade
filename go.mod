@@ -22,8 +22,6 @@ require (
 	github.com/getlantern/tlsdefaults v0.0.0-20171004213447-cf35cfd0b1b4
 	github.com/getlantern/withtimeout v0.0.0-20160829163843-511f017cd913
 	github.com/hashicorp/golang-lru v0.5.3
-	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
-	github.com/modern-go/reflect2 v1.0.1 // indirect
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c
 	github.com/stretchr/testify v1.4.0
 	golang.org/x/crypto v0.0.0-20191202143827-86a70503ff7e
