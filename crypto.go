@@ -282,9 +282,11 @@ func buildClientInitMsg(serverPublicKey *rsa.PublicKey, windowSize int, maxPaddi
 	plainText = append(plainText, cs.dataSendIV...)
 	plainText = append(plainText, cs.metaRecvIV...)
 	plainText = append(plainText, cs.dataRecvIV...)
-	_ts := make([]byte, tsSize)
-	binaryEncoding.PutUint64(_ts, uint64(ts.Unix()))
-	plainText = append(plainText, _ts...)
+	if !ts.IsZero() {
+		_ts := make([]byte, tsSize)
+		binaryEncoding.PutUint64(_ts, uint64(ts.Unix()))
+		plainText = append(plainText, _ts...)
+	}
 	cipherText, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, serverPublicKey, plainText, nil)
 	if err != nil {
 		return nil, fmt.Errorf("Unable to encrypt init msg: %v", err)
@@ -313,8 +315,10 @@ func decodeClientInitMsg(serverPrivateKey *rsa.PrivateKey, msg []byte) (windowSi
 	cs.dataSendIV, pt = consume(pt, ivSize)
 	cs.metaRecvIV, pt = consume(pt, metaIVSize)
 	cs.dataRecvIV, pt = consume(pt, ivSize)
-	_ts, _ := consume(pt, tsSize)
-	ts = time.Unix(int64(binaryEncoding.Uint64(_ts)), 0)
+	if len(pt) >= tsSize {
+		_ts, _ := consume(pt, tsSize)
+		ts = time.Unix(int64(binaryEncoding.Uint64(_ts)), 0)
+	}
 	return
 }
 
