@@ -12,30 +12,72 @@ import (
 	lru "github.com/hashicorp/golang-lru"
 )
 
-const defaultInitMsgTimeout = 5 * time.Second
+const forever = time.Duration(math.MaxInt64)
 
-type listener struct {
-	wrapped          net.Listener
-	pool             BufferPool
-	serverPrivateKey *rsa.PrivateKey
-	ackOnFirst       bool
-	onError          func(conn net.Conn, err error)
-	errCh            chan error
-	connCh           chan net.Conn
+// ListenerOpts provides options for configuring a Listener
+type ListenerOpts struct {
+	// AckOnFirst forces an immediate ACK after receiving the first frame, which could help defeat timing attacks
+	AckOnFirst bool
 
-	// initMsgTimeout controls how long the listener will wait before responding to bad client init
+	// InitMsgTimeout controls how long the listener will wait before responding to bad client init
 	// messages. This applies in 3 situations:
 	//   1. The client has sent some, but not all of the init message. This situation is salvagable
 	//      if the client sends the remainder of the init message.
 	//   2. The client sends an init message of the proper length, but we fail to decode it.
 	//   3. The client sends an init message that is too long.
+	//
 	// It is important that each situation be indistinguishable to a client. This is to avoid
-	// leaking information to probes (from bad actors) that we have a fixed-size init message. Our
-	// approach is to always close the connection after the init message timeout has elapsed.
-	initMsgTimeout time.Duration
+	// leaking information to probes (from bad actors) that we have a fixed-size init message.
+	// It is also important for this to be a really long time, as most servers in
+	// the wild which fail to respond to an unknown protocol from the client will
+	// keep the connection open indefinitely. Our approach is to always close the
+	// connection after the init message timeout has elapsed.
+	//
+	// The default value is forever
+	InitMsgTimeout time.Duration
 
-	keyCache         *lru.Cache
-	maxClientInitAge time.Duration
+	// KeyCacheSize enables and sizes a cache of previously seen client keys to
+	// protect against replay attacks.
+	KeyCacheSize int
+
+	// MaxClientInit age limits the maximum allowed age of client init messages if
+	// and only if the init message includes a timestamp field. This helps protect
+	// against replay attacks.
+	MaxClientInitAge time.Duration
+
+	// Optional callback for errors that arise when accepting connectinos
+	OnError func(net.Conn, error)
+}
+
+func (opts *ListenerOpts) withDefaults() *ListenerOpts {
+	out := &ListenerOpts{}
+	if opts != nil {
+		*out = *opts
+	}
+	if out.InitMsgTimeout <= 0 {
+		out.InitMsgTimeout = forever
+	}
+
+	if out.MaxClientInitAge <= 0 {
+		out.MaxClientInitAge = forever
+	}
+
+	if out.OnError == nil {
+		out.OnError = func(net.Conn, error) {}
+	}
+
+	return out
+}
+
+type listener struct {
+	wrapped          net.Listener
+	pool             BufferPool
+	serverPrivateKey *rsa.PrivateKey
+	opts             *ListenerOpts
+
+	keyCache *lru.Cache
+	errCh    chan error
+	connCh   chan net.Conn
 }
 
 // WrapListener wraps the given listener with support for multiplexing. Only
@@ -51,53 +93,25 @@ type listener struct {
 //
 // pool - BufferPool to use
 //
-// serverPrivateKey - if provided, this listener will expect connections to use
-//                    encryption
+// serverPrivateKey - RSA key to decrypt client init messages
 //
-// ackOnFirst - forces an immediate ACK after receiving the first frame, which could help defeat timing attacks
+// opts - Options configuring the listener
 //
-func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool) net.Listener {
-	return WrapListenerIncludingErrorHandler(wrapped, pool, serverPrivateKey, ackOnFirst, nil)
-}
-
-// WrapListenerIncludingErrorHandler is like WrapListener and also supports a
-// callback for errors on accepting new connections.
-func WrapListenerIncludingErrorHandler(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, onError func(net.Conn, error)) net.Listener {
-	return WrapListenerRememberingKeys(wrapped, pool, serverPrivateKey, ackOnFirst, 0, onError)
-}
-
-// WrapListenerRememberingKeys is like WrapListenerIncludingErrorHandler and also uses an LRU cache to thwart replays of client init
-// messages.
-func WrapListenerRememberingKeys(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, keyCacheSize int, onError func(net.Conn, error)) net.Listener {
-	return WrapListenerLimitingInitAge(wrapped, pool, serverPrivateKey, ackOnFirst, keyCacheSize, 0, onError)
-}
-
-// WrapListenerLimitingInitAge is like WrapListenerRememberingKeys and also limits the maximum age of client init messages
-func WrapListenerLimitingInitAge(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, ackOnFirst bool, keyCacheSize int, maxClientInitAge time.Duration, onError func(net.Conn, error)) net.Listener {
-	if onError == nil {
-		onError = func(net.Conn, error) {}
-	}
-
-	if maxClientInitAge <= 0 {
-		maxClientInitAge = time.Duration(math.MaxInt64)
-	}
+func WrapListener(wrapped net.Listener, pool BufferPool, serverPrivateKey *rsa.PrivateKey, opts *ListenerOpts) net.Listener {
 
 	// TODO: add a maxWindowSize
 	l := &listener{
 		wrapped:          wrapped,
 		pool:             pool,
 		serverPrivateKey: serverPrivateKey,
-		ackOnFirst:       ackOnFirst,
-		onError:          onError,
+		opts:             opts.withDefaults(),
 		connCh:           make(chan net.Conn),
 		errCh:            make(chan error),
-		initMsgTimeout:   defaultInitMsgTimeout,
-		maxClientInitAge: maxClientInitAge,
 	}
-	if keyCacheSize > 0 {
-		l.keyCache, _ = lru.New(keyCacheSize)
+	if opts.KeyCacheSize > 0 {
+		l.keyCache, _ = lru.New(opts.KeyCacheSize)
 		if l.keyCache != nil {
-			log.Debugf("Caching up to %d keys to prevent replays", keyCacheSize)
+			log.Debugf("Caching up to %d keys to prevent replays", opts.KeyCacheSize)
 		}
 	}
 	ops.Go(l.process)
@@ -167,26 +181,31 @@ func (l *listener) doOnConn(conn net.Conn) error {
 
 	var (
 		start             = time.Now()
-		readDeadline      = start.Add(l.initMsgTimeout)
+		readDeadline      = start.Add(l.opts.InitMsgTimeout)
 		clearReadDeadline = func(c net.Conn) { c.SetReadDeadline(time.Time{}) }
 		initMsg           = make([]byte, clientInitSize)
 	)
+
+	consumeInboundTillDeadlineThenFail := func(fullErr error) error {
+		io.Copy(ioutil.Discard, conn)
+		clearReadDeadline(conn)
+		l.opts.OnError(conn, fullErr)
+		conn.Close()
+		return fullErr
+	}
 
 	conn.SetReadDeadline(readDeadline)
 	_, err := io.ReadFull(conn, initMsg)
 	if err != nil {
 		fullErr := log.Errorf("Unable to read client init msg %v after %v from %v ", err, time.Since(start), conn.RemoteAddr())
-		time.Sleep(time.Until(readDeadline))
-		clearReadDeadline(conn)
-		l.onError(conn, fullErr)
-		return fullErr
+		return consumeInboundTillDeadlineThenFail(fullErr)
 	}
 
 	windowSize, maxPadding, cs, ts, err := decodeClientInitMsg(l.serverPrivateKey, initMsg)
 	var fullErr error
 	if err != nil {
 		fullErr = log.Errorf("Unable to decode client init msg from %v: %v", conn.RemoteAddr(), err)
-	} else if !ts.IsZero() && time.Now().Sub(ts) > l.maxClientInitAge {
+	} else if !ts.IsZero() && time.Now().Sub(ts) > l.opts.MaxClientInitAge {
 		fullErr = log.Errorf("Detected excessively old client init message from %v", conn.RemoteAddr())
 	} else if l.keyCache != nil {
 		key := string(cs.secret)
@@ -196,14 +215,12 @@ func (l *listener) doOnConn(conn net.Conn) error {
 			l.keyCache.Add(key, nil)
 		}
 	}
+
 	if fullErr != nil {
-		// Continue reading from the peer until the read deadline.
-		io.Copy(ioutil.Discard, conn)
-		clearReadDeadline(conn)
-		l.onError(conn, fullErr)
-		return fullErr
+		return consumeInboundTillDeadlineThenFail(fullErr)
 	}
+
 	clearReadDeadline(conn)
-	startSession(conn, windowSize, maxPadding, l.ackOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
+	startSession(conn, windowSize, maxPadding, l.opts.AckOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
 	return nil
 }

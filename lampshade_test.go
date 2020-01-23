@@ -577,7 +577,10 @@ func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey,
 		}
 	}
 
-	l := WrapListenerLimitingInitAge(wrapped, pool, serverPrivateKey, false, keyCacheSize, maxClientInitAge, nil)
+	l := WrapListener(wrapped, pool, serverPrivateKey, &ListenerOpts{
+		AckOnFirst:       false,
+		KeyCacheSize:     keyCacheSize,
+		MaxClientInitAge: maxClientInitAge})
 
 	var wg sync.WaitGroup
 	go func() {
@@ -754,7 +757,7 @@ func TestConcurrency(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unable to listen: %v", err)
 	}
-	lst := WrapListener(_lst, pool, pk.RSA(), true)
+	lst := WrapListener(_lst, pool, pk.RSA(), &ListenerOpts{AckOnFirst: true})
 
 	go func() {
 		for {
@@ -838,7 +841,7 @@ func TestActiveProbing(t *testing.T) {
 	defer l.Close()
 
 	// This just makes the test faster.
-	l.(*listener).initMsgTimeout = 100 * time.Millisecond
+	l.(*listener).opts.InitMsgTimeout = 100 * time.Millisecond
 
 	results, err := probe.ForRandomizedTransport(probe.Config{
 		Network:         "tcp",
@@ -891,7 +894,7 @@ func doBenchmarkThroughputLampshade(b *testing.B, cipherCode Cipher) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA(), true)
+	lst := WrapListener(_lst, NewBufferPool(100), pk.RSA(), &ListenerOpts{AckOnFirst: true})
 
 	conn, err := NewDialer(&DialerOpts{
 		WindowSize:      25,
