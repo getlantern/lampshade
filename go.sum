@@ -49,6 +49,10 @@ github.com/getlantern/hidden v0.0.0-20190325191715-f02dbb02be55 h1:XYzSdCbkzOC0F
 github.com/getlantern/hidden v0.0.0-20190325191715-f02dbb02be55/go.mod h1:6mmzY2kW1TOOrVy+r41Za2MxXM+hhqTtY3oBKd2AgFA=
 github.com/getlantern/idletiming v0.0.0-20190529182719-d2fbc83372a5 h1:laM1s/bxUH8xbbC9TBGWsOc7A0KCAPZMa4pdwO5e6Vw=
 github.com/getlantern/idletiming v0.0.0-20190529182719-d2fbc83372a5/go.mod h1:MGP8kEgZGgAhvHISt0hJGQgxg/VAqGdw3+kSZBnfC/4=
+github.com/getlantern/idletiming v0.0.0-20200204041424-25f0e0eb510a h1:h1LkTNiqMAPRyuShPyit2Iq0karxtFXp4b9p5fgUU8Y=
+github.com/getlantern/idletiming v0.0.0-20200204041424-25f0e0eb510a/go.mod h1:MGP8kEgZGgAhvHISt0hJGQgxg/VAqGdw3+kSZBnfC/4=
+github.com/getlantern/idletiming v0.0.0-20200204045451-3f1a3710fae3 h1:lN7uAeOiAqcO2kkeDo6CGtPPyizhTTVsyW+giZlGDZ8=
+github.com/getlantern/idletiming v0.0.0-20200204045451-3f1a3710fae3/go.mod h1:MGP8kEgZGgAhvHISt0hJGQgxg/VAqGdw3+kSZBnfC/4=
 github.com/getlantern/keyman v0.0.0-20180207174507-f55e7280e93a h1:SBw2c296eaLrrnydtLhcjgvNB1mDaXF1SSfW4DGt0kk=
 github.com/getlantern/keyman v0.0.0-20180207174507-f55e7280e93a/go.mod h1:FMf0g72BHs14jVcD8i8ubEk4sMB6JdidBn67d44i3ws=
 github.com/getlantern/mockconn v0.0.0-20191023022503-481dbcceeb58 h1:95ogd2dX0JeYDUI4Ssl9ARhVAh+kvOTpN6TOD/tX0Vs=

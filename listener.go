@@ -8,6 +8,8 @@ import (
 	"net"
 	"time"
 
+	"github.com/getlantern/idletiming"
+	"github.com/getlantern/netx"
 	"github.com/getlantern/ops"
 	lru "github.com/hashicorp/golang-lru"
 )
@@ -186,10 +188,24 @@ func (l *listener) doOnConn(conn net.Conn) error {
 		initMsg           = make([]byte, clientInitSize)
 	)
 
+	// Handle pausing of idletiming to keep it from superseding our InitMsgTimeout
+	unpauseIdleTiming := func() {
+		// do nothing
+	}
+	netx.WalkWrapped(conn, func(wrapped net.Conn) bool {
+		idleConn, ok := wrapped.(*idletiming.IdleTimingConn)
+		if ok {
+			unpauseIdleTiming = idleConn.Pause()
+			return false
+		}
+		return true
+	})
+
 	consumeInboundTillDeadlineThenFail := func(fullErr error) error {
 		io.Copy(ioutil.Discard, conn)
 		clearReadDeadline(conn)
 		l.opts.OnError(conn, fullErr)
+		unpauseIdleTiming()
 		conn.Close()
 		return fullErr
 	}
@@ -221,6 +237,7 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	}
 
 	clearReadDeadline(conn)
+	unpauseIdleTiming()
 	startSession(conn, windowSize, maxPadding, l.opts.AckOnFirst, 0, cs.reversed(), nil, l.pool, nil, l.connCh, nil)
 	return nil
 }
