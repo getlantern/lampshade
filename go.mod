@@ -4,7 +4,6 @@ go 1.12
 
 require (
 	github.com/Yawning/chacha20 v0.0.0-20170904085104-e3b1f968fc63
-	github.com/aristanetworks/goarista v0.0.0-20191106175434-873d404c7f40 // indirect
 	github.com/getlantern/bytecounting v0.0.0-20190530140808-3b3f10d3b9ab
 	github.com/getlantern/byteexec v0.0.0-20170405023437-4cfb26ec74f4 // indirect
 	github.com/getlantern/elevate v0.0.0-20180207094634-c2e2e4901072 // indirect
@@ -12,7 +11,7 @@ require (
 	github.com/getlantern/fdcount v0.0.0-20190912142506-f89afd7367c4
 	github.com/getlantern/filepersist v0.0.0-20160317154340-c5f0cd24e799 // indirect
 	github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7
-	github.com/getlantern/idletiming v0.0.0-20200204045451-3f1a3710fae3
+	github.com/getlantern/idletiming v0.0.0-20200206172754-f356a3557cf3
 	github.com/getlantern/keyman v0.0.0-20180207174507-f55e7280e93a
 	github.com/getlantern/mockconn v0.0.0-20191023022503-481dbcceeb58 // indirect
 	github.com/getlantern/mtime v0.0.0-20170117193331-ba114e4a82b0
