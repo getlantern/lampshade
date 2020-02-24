@@ -202,6 +202,10 @@ func (l *listener) doOnConn(conn net.Conn) error {
 	})
 
 	consumeInboundTillDeadlineThenFail := func(fullErr error) error {
+		start := time.Now()
+		defer func() {
+			log.Debugf("Finished consuming inbound till deadline in %v", time.Now().Sub(start))
+		}()
 		io.Copy(ioutil.Discard, conn)
 		clearReadDeadline(conn)
 		l.opts.OnError(conn, fullErr)

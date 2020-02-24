@@ -64,33 +64,35 @@ func (s nullSession) CreateStream() *stream { panic("should never be called") }
 // net.Conn.
 type session struct {
 	net.Conn
-	windowSize       int
-	maxPadding       *big.Int
-	paddingEnabled   bool
-	cipherOverhead   int
-	ackOnFirst       bool
-	metaDecrypt      func([]byte) // decrypt in place
-	metaEncrypt      func([]byte) // encrypt in place
-	dataDecrypt      func([]byte) ([]byte, error)
-	dataEncrypt      func(dst []byte, src []byte) []byte
-	pool             BufferPool
-	pingInterval     time.Duration
-	lastPing         time.Time
-	sendSessionFrame []byte
-	sendLengthBuffer []byte
-	out              chan []byte
-	echoOut          chan []byte
-	streams          map[uint16]*stream
-	closed           map[uint16]bool
-	defunct          bool
-	connCh           chan net.Conn
-	beforeClose      func(*session)
-	emaRTT           *ema.EMA
-	closeCh          chan struct{}
-	closeOnce        sync.Once
-	lastDialed       time.Time
-	nextID           uint32
-	mx               sync.RWMutex
+	windowSize          int
+	maxPadding          *big.Int
+	paddingEnabled      bool
+	cipherOverhead      int
+	ackOnFirst          bool
+	metaDecrypt         func([]byte) // decrypt in place
+	metaEncrypt         func([]byte) // encrypt in place
+	dataDecrypt         func([]byte) ([]byte, error)
+	dataEncrypt         func(dst []byte, src []byte) []byte
+	pool                BufferPool
+	pingInterval        time.Duration
+	lastPing            time.Time
+	sendSessionFrame    []byte
+	sendLengthBuffer    []byte
+	out                 chan []byte
+	echoOut             chan []byte
+	streams             map[uint16]*stream
+	closed              map[uint16]bool
+	defunct             bool
+	connCh              chan net.Conn
+	beforeClose         func(*session)
+	emaRTT              *ema.EMA
+	closeCh             chan struct{}
+	closeOnce           sync.Once
+	finishedSendingCh   chan struct{}
+	finishedReceivingCh chan struct{}
+	lastDialed          time.Time
+	nextID              uint32
+	mx                  sync.RWMutex
 }
 
 // startSession starts a session on the given net.Conn using the given params.
@@ -100,26 +102,28 @@ type session struct {
 // with the first frame sent in this session.
 func startSession(conn net.Conn, windowSize int, maxPadding int, ackOnFirst bool, pingInterval time.Duration, cs *cryptoSpec, clientInitMsg []byte, pool BufferPool, emaRTT *ema.EMA, connCh chan net.Conn, beforeClose func(*session)) (*session, error) {
 	s := &session{
-		Conn:             conn,
-		windowSize:       windowSize,
-		maxPadding:       big.NewInt(int64(maxPadding)),
-		paddingEnabled:   maxPadding > 0,
-		ackOnFirst:       ackOnFirst,
-		cipherOverhead:   cs.cipherCode.overhead(),
-		pool:             pool,
-		pingInterval:     pingInterval,
-		lastPing:         time.Now(),
-		sendSessionFrame: make([]byte, maxSessionFrameSize), // Pre-allocate a sessionFrame for sending
-		sendLengthBuffer: make([]byte, lenSize),             // pre-allocate buffer for length to avoid extra allocations
-		out:              make(chan []byte),
-		echoOut:          make(chan []byte),
-		streams:          make(map[uint16]*stream),
-		closed:           make(map[uint16]bool),
-		emaRTT:           emaRTT,
-		connCh:           connCh,
-		beforeClose:      beforeClose,
-		closeCh:          make(chan struct{}),
-		lastDialed:       time.Now(), // to avoid new sessions being marked as idle.
+		Conn:                conn,
+		windowSize:          windowSize,
+		maxPadding:          big.NewInt(int64(maxPadding)),
+		paddingEnabled:      maxPadding > 0,
+		ackOnFirst:          ackOnFirst,
+		cipherOverhead:      cs.cipherCode.overhead(),
+		pool:                pool,
+		pingInterval:        pingInterval,
+		lastPing:            time.Now(),
+		sendSessionFrame:    make([]byte, maxSessionFrameSize), // Pre-allocate a sessionFrame for sending
+		sendLengthBuffer:    make([]byte, lenSize),             // pre-allocate buffer for length to avoid extra allocations
+		out:                 make(chan []byte),
+		echoOut:             make(chan []byte),
+		streams:             make(map[uint16]*stream),
+		closed:              make(map[uint16]bool),
+		emaRTT:              emaRTT,
+		connCh:              connCh,
+		beforeClose:         beforeClose,
+		closeCh:             make(chan struct{}),
+		finishedSendingCh:   make(chan struct{}),
+		finishedReceivingCh: make(chan struct{}),
+		lastDialed:          time.Now(), // to avoid new sessions being marked as idle.
 	}
 	var err error
 	s.metaEncrypt, s.dataEncrypt, s.metaDecrypt, s.dataDecrypt, err = cs.crypters()
@@ -147,6 +151,8 @@ func (s *session) sendClientInitMsg(clientInitMsg []byte) {
 
 func (s *session) recvLoop() {
 	atomic.AddInt64(&recvLoops, 1)
+
+	defer close(s.finishedReceivingCh)
 
 	stoppedOnExpectedEOF := false
 
@@ -336,6 +342,9 @@ func (s *session) recvLoop() {
 
 func (s *session) sendLoop() {
 	atomic.AddInt64(&sendLoops, 1)
+
+	defer close(s.finishedSendingCh)
+
 	defer func() {
 		atomic.AddInt64(&sendLoops, -1)
 	}()
@@ -522,6 +531,8 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	for _, c := range s.streams {
 		streams = append(streams, c)
 	}
+	// Clear out map of streams
+	s.streams = make(map[uint16]*stream, 0)
 	s.mx.RUnlock()
 
 	if readErr == io.EOF && len(streams) > 0 {
@@ -633,6 +644,20 @@ func (s *session) Close() error {
 		atomic.AddInt64(&closingSessions, -1)
 		atomic.AddInt64(&openSessions, -1)
 		atomic.AddInt64(&closedSessions, 1)
+		go func() {
+			// wait until we're finished sending and receiving and then close any remaining streams
+			<-s.finishedSendingCh
+			<-s.finishedReceivingCh
+
+			s.mx.RLock()
+			for _, c := range s.streams {
+				// Note - we never send an RST because the underlying connection is
+				// considered no good at this point and we won't bother sending anything.
+				go c.close(false, nil, nil)
+			}
+			s.streams = nil
+			s.mx.RUnlock()
+		}()
 		err = nil
 	})
 	return err
