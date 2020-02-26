@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/getlantern/ema"
@@ -525,17 +526,12 @@ func (snd *sender) coalesce(b []byte) {
 }
 
 func (s *session) onSessionError(readErr error, writeErr error) {
-	s.Close()
 	s.mx.RLock()
-	streams := make([]*stream, 0, len(s.streams))
-	for _, c := range s.streams {
-		streams = append(streams, c)
-	}
-	// Clear out map of streams
-	s.streams = make(map[uint16]*stream, 0)
+	numStreams := len(s.streams)
 	s.mx.RUnlock()
+	s.Close()
 
-	if readErr == io.EOF && len(streams) > 0 {
+	if readErr == io.EOF && numStreams > 0 {
 		// Treat EOF as ErrUnexpectedEOF because the underlying connection should
 		// never be out of data until and unless the stream has been closed with an
 		// RST frame.
@@ -543,23 +539,16 @@ func (s *session) onSessionError(readErr error, writeErr error) {
 	}
 
 	if readErr == nil {
-		readErr = ErrBrokenPipe
+		readErr = syscall.EPIPE
 	} else if readErr != io.EOF {
 		log.Errorf("Error on reading from %v: %v", s.RemoteAddr(), readErr)
 	}
 
 	if writeErr == nil {
-		writeErr = ErrBrokenPipe
+		writeErr = syscall.EPIPE
 	} else {
 		log.Errorf("Error on writing to %v: %v", s.RemoteAddr(), writeErr)
 	}
-
-	for _, c := range streams {
-		// Note - we never send an RST because the underlying connection is
-		// considered no good at this point and we won't bother sending anything.
-		go c.close(false, readErr, writeErr)
-	}
-
 }
 
 func (s *session) CreateStream() *stream {
@@ -655,7 +644,6 @@ func (s *session) Close() error {
 				// considered no good at this point and we won't bother sending anything.
 				go c.close(false, nil, nil)
 			}
-			s.streams = nil
 			s.mx.RUnlock()
 		}()
 		err = nil
