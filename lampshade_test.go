@@ -164,7 +164,7 @@ func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
 	assert.Equal(t, 0, n)
 
 	_, err = conn.Write([]byte("whatever"))
-	assert.Equal(t, ErrBrokenPipe, err)
+	assert.Equal(t, syscall.EPIPE, err)
 
 	// Now dial again and make sure that works
 	conn, err = dialer.Dial()
@@ -251,7 +251,7 @@ func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	_, err = conn.Write([]byte("stop"))
-	assert.Equal(t, ErrBrokenPipe, err)
+	assert.Equal(t, syscall.EPIPE, err)
 
 	b := make([]byte, 4)
 	n, err := conn.Read(b)
