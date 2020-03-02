@@ -49,16 +49,20 @@ func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendB
 func (buf *sendBuffer) sendLoop(out chan []byte) {
 	closeTimedOut := make(chan interface{})
 
+	write := func(b []byte) {
+		select {
+		case out <- b:
+			// okay
+		case <-closeTimedOut:
+			// closed before data could be sent
+		}
+	}
+
 	sendRST := false
 	defer func() {
 		if sendRST {
 			// Send an RST frame with the streamID
-			select {
-			case out <- withFrameType(buf.defaultHeader, frameTypeRST):
-				// okay
-			case <-closeTimedOut:
-				// closed before RST could be sent
-			}
+			write(withFrameType(buf.defaultHeader, frameTypeRST))
 		}
 		buf.closed.Done()
 	}()
@@ -85,14 +89,14 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 				select {
 				case <-windowAvailable:
 					// send allowed
-					out <- append(frame, buf.defaultHeader...)
+					write(append(frame, buf.defaultHeader...))
 				case sendRST = <-buf.closeRequested:
 					// close requested before window available
 					signalClose()
 					select {
 					case <-windowAvailable:
 						// send allowed
-						out <- append(frame, buf.defaultHeader...)
+						write(append(frame, buf.defaultHeader...))
 					case <-closeTimedOut:
 						// closed before window available
 						return
