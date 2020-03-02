@@ -60,9 +60,6 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 				// closed before RST could be sent
 			}
 		}
-		// drain remaining writes
-		for range buf.in {
-		}
 		buf.closed.Done()
 	}()
 
