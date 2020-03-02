@@ -11,10 +11,9 @@ require (
 	github.com/getlantern/fdcount v0.0.0-20190912142506-f89afd7367c4
 	github.com/getlantern/filepersist v0.0.0-20160317154340-c5f0cd24e799 // indirect
 	github.com/getlantern/golog v0.0.0-20190830074920-4ef2e798c2d7
-	github.com/getlantern/idletiming v0.0.0-20200206172754-f356a3557cf3
+	github.com/getlantern/idletiming v0.0.0-20200228204104-10036786eac5
 	github.com/getlantern/keyman v0.0.0-20180207174507-f55e7280e93a
-	github.com/getlantern/mockconn v0.0.0-20191023022503-481dbcceeb58 // indirect
-	github.com/getlantern/mtime v0.0.0-20170117193331-ba114e4a82b0
+	github.com/getlantern/mtime v0.0.0-20200228202836-084e1d8282b0
 	github.com/getlantern/netx v0.0.0-20190110220209-9912de6f94fd
 	github.com/getlantern/ops v0.0.0-20190325191751-d70cb0d6f85f
 	github.com/getlantern/probe v0.0.0-20191107230642-ed284e08029a
@@ -22,6 +21,8 @@ require (
 	github.com/getlantern/withtimeout v0.0.0-20160829163843-511f017cd913
 	github.com/hashicorp/golang-lru v0.5.3
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c
-	github.com/stretchr/testify v1.4.0
+	github.com/stretchr/testify v1.5.1
 	golang.org/x/crypto v0.0.0-20191202143827-86a70503ff7e
+	golang.org/x/net v0.0.0-20190912160710-24e19bdeb0f2 // indirect
+	golang.org/x/sys v0.0.0-20190912141932-bc967efca4b8 // indirect
 )
