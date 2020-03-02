@@ -1,7 +1,6 @@
 package lampshade
 
 import (
-	"io"
 	"sync"
 	"syscall"
 	"time"
@@ -34,7 +33,7 @@ type sendBuffer struct {
 	writeTimer     *time.Timer
 }
 
-func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int) *sendBuffer {
+func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendBuffer {
 	buf := &sendBuffer{
 		defaultHeader:  defaultHeader,
 		window:         newWindow(windowSize),
@@ -43,16 +42,23 @@ func newSendBuffer(defaultHeader []byte, w io.Writer, windowSize int) *sendBuffe
 		writeTimer:     time.NewTimer(largeTimeout),
 	}
 	buf.closed.Add(1)
-	ops.Go(func() { buf.sendLoop(w) })
+	ops.Go(func() { buf.sendLoop(out) })
 	return buf
 }
 
-func (buf *sendBuffer) sendLoop(w io.Writer) {
+func (buf *sendBuffer) sendLoop(out chan []byte) {
+	closeTimedOut := make(chan interface{})
+
 	sendRST := false
 	defer func() {
 		if sendRST {
 			// Send an RST frame with the streamID
-			w.Write(withFrameType(buf.defaultHeader, frameTypeRST))
+			select {
+			case out <- withFrameType(buf.defaultHeader, frameTypeRST):
+				// okay
+			case <-closeTimedOut:
+				// closed before RST could be sent
+			}
 		}
 		// drain remaining writes
 		for range buf.in {
@@ -60,7 +66,6 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 		buf.closed.Done()
 	}()
 
-	closeTimedOut := make(chan interface{})
 	var closeOnce sync.Once
 	signalClose := func() {
 		closeOnce.Do(func() {
@@ -83,14 +88,14 @@ func (buf *sendBuffer) sendLoop(w io.Writer) {
 				select {
 				case <-windowAvailable:
 					// send allowed
-					w.Write(append(frame, buf.defaultHeader...))
+					out <- append(frame, buf.defaultHeader...)
 				case sendRST = <-buf.closeRequested:
 					// close requested before window available
 					signalClose()
 					select {
 					case <-windowAvailable:
 						// send allowed
-						w.Write(append(frame, buf.defaultHeader...))
+						out <- append(frame, buf.defaultHeader...)
 					case <-closeTimedOut:
 						// closed before window available
 						return
@@ -152,6 +157,8 @@ func (buf *sendBuffer) close(sendRST bool) {
 	default:
 		// close already requested, ignore
 	}
-	buf.writeTimer.Stop()
+	if !buf.writeTimer.Stop() {
+		<-buf.writeTimer.C
+	}
 	buf.closed.Wait()
 }
