@@ -613,7 +613,7 @@ func echoServer(pool BufferPool, overTLS bool, serverPrivateKey *rsa.PrivateKey,
 					}
 					if string(b) == "kill" {
 						// Interrupt the underlying connection to see what happens
-						conn.(Stream).Session().Close()
+						conn.(Stream).Session().Wrapped().Close()
 						return
 					}
 					for i := 0; i < amplification; i++ {
