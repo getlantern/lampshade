@@ -3,7 +3,6 @@ package lampshade
 import (
 	"io"
 	"math"
-	"sync"
 	"time"
 )
 
@@ -26,7 +25,6 @@ type receiveBuffer struct {
 	pool          BufferPool
 	poolable      []byte
 	current       []byte
-	muClosing     sync.RWMutex
 	closed        chan interface{}
 }
 
@@ -46,30 +44,9 @@ func newReceiveBuffer(defaultHeader []byte, ack chan []byte, pool BufferPool, wi
 // submit allows the session to submit a new frame to the receiveBuffer. If the
 // receiveBuffer has been closed, this is a noop.
 func (buf *receiveBuffer) submit(frame []byte) {
-	for {
-		if buf.doSubmit(frame) {
-			return
-		}
-	}
-}
-
-func (buf *receiveBuffer) doSubmit(frame []byte) bool {
-	buf.muClosing.RLock()
-	defer buf.muClosing.RUnlock()
-
 	select {
+	case buf.in <- frame:
 	case <-buf.closed:
-		// already closed, don't bother
-		return true
-	default:
-		select {
-		case buf.in <- frame:
-			// okay
-			return true
-		case <-time.After(closeTimeout):
-			// don't block forever on writing to buf.in. This gives us a chance to see whether we've closed in the meantime
-			return false
-		}
 	}
 }
 
@@ -94,16 +71,15 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 		// immediately available.
 		b = b[n:]
 		select {
-		case frame, open := <-buf.in:
+		case frame := <-buf.in:
 			// Read next frame, continue loop
-			if !open {
-				// we've hit the end
-				err = io.EOF
-				buf.ackIfNecessary()
-				return
-			}
 			buf.onFrame(frame)
 			continue
+		case <-buf.closed:
+			// we've hit the end
+			err = io.EOF
+			buf.ackIfNecessary()
+			return
 		default:
 			// nothing immediately available
 			if totalN > 0 {
@@ -136,17 +112,16 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				stopTimer()
 				buf.ackIfNecessary()
 				return
-			case frame, open := <-buf.in:
+			case frame := <-buf.in:
 				// Read next frame, continue loop
-				if !open {
-					// we've hit the end
-					stopTimer()
-					err = io.EOF
-					buf.ackIfNecessary()
-					return
-				}
 				buf.onFrame(frame)
 				continue
+			case <-buf.closed:
+				// we've hit the end
+				stopTimer()
+				err = io.EOF
+				buf.ackIfNecessary()
+				return
 			}
 		}
 	}
@@ -184,9 +159,6 @@ func (buf *receiveBuffer) close() {
 	case <-buf.closed:
 		return
 	default:
-		buf.muClosing.Lock()
 		close(buf.closed)
-		close(buf.in)
-		buf.muClosing.Unlock()
 	}
 }
