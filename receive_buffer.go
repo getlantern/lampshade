@@ -123,24 +123,16 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				buf.ackIfNecessary()
 				return
 			}
-			timer := time.NewTimer(deadline.Sub(now))
-			stopTimer := func() {
-				if !timer.Stop() {
-					<-timer.C
-				}
-			}
 			select {
-			case <-timer.C:
+			case <-time.After(deadline.Sub(now)):
 				// Nothing read within deadline
 				err = ErrTimeout
-				stopTimer()
 				buf.ackIfNecessary()
 				return
 			case frame, open := <-buf.in:
 				// Read next frame, continue loop
 				if !open {
 					// we've hit the end
-					stopTimer()
 					err = io.EOF
 					buf.ackIfNecessary()
 					return
