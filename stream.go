@@ -100,8 +100,12 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 		c.closed = true
 		c.finalReadErr = readErr
 		c.finalWriteErr = writeErr
+		atomic.AddInt64(&closingReceiveBuffers, 1)
 		c.rb.close()
+		atomic.AddInt64(&closingReceiveBuffers, -1)
+		atomic.AddInt64(&closingSendBuffers, 1)
 		c.sb.close(sendRST)
+		atomic.AddInt64(&closingSendBuffers, -1)
 		atomic.AddInt64(&closingStreams, -1)
 		atomic.AddInt64(&openStreams, -1)
 		atomic.AddInt64(&closedStreams, 1)
