@@ -15,7 +15,7 @@ func TestReceiveBuffer(t *testing.T) {
 	depth := 5
 
 	pool := &testpool{}
-	ack := &mockWriter{make(chan []byte, 1000)}
+	ack := make(chan []byte, 1000)
 	buf := newReceiveBuffer(header, ack, pool, depth)
 	for i := 0; i < 2; i++ {
 		b := pool.Get()
@@ -36,7 +36,7 @@ func TestReceiveBuffer(t *testing.T) {
 ackloop:
 	for {
 		select {
-		case a := <-ack.c:
+		case a := <-ack:
 			if assert.EqualValues(t, frameTypeACK, a[winSize]) {
 				a2 := withFrameType(a[winSize:], frameTypeData)
 				if assert.EqualValues(t, header, a2) {
@@ -48,6 +48,30 @@ ackloop:
 		}
 	}
 	assert.Equal(t, 1, totalAcks)
+}
+
+func TestReceiveBufferNoProcessACK(t *testing.T) {
+	header := newHeader(frameTypeData, 27)
+
+	depth := 1
+
+	pool := &testpool{}
+	ack := make(chan []byte)
+	buf := newReceiveBuffer(header, ack, pool, depth)
+	go func() {
+		time.Sleep(1 * time.Second)
+		buf.close()
+		b := pool.Get()
+		// Submit one more time to make sure that we don't get an error trying to send on a closed channel (i.e. buf.in)
+		b[dataHeaderSize] = fmt.Sprint(9)[0]
+		buf.submit(b[:dataHeaderSize+1])
+	}()
+
+	for i := 0; i < 2; i++ {
+		b := pool.Get()
+		b[dataHeaderSize] = fmt.Sprint(i)[0]
+		buf.submit(b[:dataHeaderSize+1])
+	}
 }
 
 type testpool struct {

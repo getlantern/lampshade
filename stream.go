@@ -1,7 +1,6 @@
 package lampshade
 
 import (
-	"io"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -24,14 +23,14 @@ type stream struct {
 	mx            sync.RWMutex
 }
 
-func newStream(s *session, bp BufferPool, w io.Writer, windowSize int, defaultHeader []byte) *stream {
+func newStream(s *session, bp BufferPool, out chan []byte, windowSize int, defaultHeader []byte) *stream {
 	atomic.AddInt64(&openStreams, 1)
 	return &stream{
 		Conn:    s,
 		session: s,
 		pool:    bp,
-		sb:      newSendBuffer(defaultHeader, w, windowSize),
-		rb:      newReceiveBuffer(defaultHeader, w, bp, windowSize),
+		sb:      newSendBuffer(defaultHeader, out, windowSize),
+		rb:      newReceiveBuffer(defaultHeader, out, bp, windowSize),
 	}
 }
 
@@ -101,8 +100,12 @@ func (c *stream) close(sendRST bool, readErr error, writeErr error) error {
 		c.closed = true
 		c.finalReadErr = readErr
 		c.finalWriteErr = writeErr
+		atomic.AddInt64(&closingReceiveBuffers, 1)
 		c.rb.close()
+		atomic.AddInt64(&closingReceiveBuffers, -1)
+		atomic.AddInt64(&closingSendBuffers, 1)
 		c.sb.close(sendRST)
+		atomic.AddInt64(&closingSendBuffers, -1)
 		atomic.AddInt64(&closingStreams, -1)
 		atomic.AddInt64(&openStreams, -1)
 		atomic.AddInt64(&closedStreams, 1)

@@ -25,15 +25,17 @@ var (
 )
 
 var (
-	openSessions    int64
-	closingSessions int64
-	closedSessions  int64
-	openStreams     int64
-	closingStreams  int64
-	closedStreams   int64
-	recvLoops       int64
-	sendLoops       int64
-	trackStatsOnce  sync.Once
+	openSessions          int64
+	closingSessions       int64
+	closedSessions        int64
+	openStreams           int64
+	closingStreams        int64
+	closingReceiveBuffers int64
+	closingSendBuffers    int64
+	closedStreams         int64
+	recvLoops             int64
+	sendLoops             int64
+	trackStatsOnce        sync.Once
 )
 
 func trackStats() {
@@ -43,6 +45,8 @@ func trackStats() {
 				time.Sleep(10 * time.Second)
 				log.Debugf("Sessions    Open: %d   Closing: %d   Closed: %d   Recv Loops: %d   Send Loops: %d", atomic.LoadInt64(&openSessions), atomic.LoadInt64(&closingSessions), atomic.LoadInt64(&closedSessions), atomic.LoadInt64(&recvLoops), atomic.LoadInt64(&sendLoops))
 				log.Debugf("Streams     Open: %d   Closing: %d   Closed: %d", atomic.LoadInt64(&openStreams), atomic.LoadInt64(&closingStreams), atomic.LoadInt64(&closedStreams))
+				log.Debugf("Receive Buffers        Closing: %d", atomic.LoadInt64(&closingReceiveBuffers))
+				log.Debugf("Send Buffers           Closing: %d", atomic.LoadInt64(&closingSendBuffers))
 			}
 		})
 	})
@@ -571,7 +575,7 @@ func (s *session) getOrCreateStream(id uint16) (*stream, bool) {
 		return nil, false
 	}
 
-	c = newStream(s, s.pool, sessionWriter{s}, s.windowSize, newHeader(frameTypeData, id))
+	c = newStream(s, s.pool, s.out, s.windowSize, newHeader(frameTypeData, id))
 	s.streams[id] = c
 	s.mx.Unlock()
 	if s.connCh != nil {
@@ -662,19 +666,6 @@ func (s *session) isClosed() bool {
 
 func (s *session) Wrapped() net.Conn {
 	return s.Conn
-}
-
-type sessionWriter struct {
-	s *session
-}
-
-func (w sessionWriter) Write(b []byte) (int, error) {
-	select {
-	case <-w.s.closeCh:
-		return 0, errorAlreadyClosed
-	case w.s.out <- b:
-		return len(b), nil
-	}
 }
 
 // TODO: do we need a way to close a session/physical connection intentionally?

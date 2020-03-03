@@ -22,15 +22,15 @@ type receiveBuffer struct {
 	ackInterval   int
 	unacked       int
 	in            chan []byte
-	ack           io.Writer
+	ack           chan []byte
 	pool          BufferPool
 	poolable      []byte
 	current       []byte
-	closed        bool
-	mx            sync.RWMutex
+	muClosing     sync.RWMutex
+	closed        chan interface{}
 }
 
-func newReceiveBuffer(defaultHeader []byte, ack io.Writer, pool BufferPool, windowSize int) *receiveBuffer {
+func newReceiveBuffer(defaultHeader []byte, ack chan []byte, pool BufferPool, windowSize int) *receiveBuffer {
 	ackInterval := int(math.Ceil(float64(windowSize) / 10))
 	return &receiveBuffer{
 		defaultHeader: defaultHeader,
@@ -39,20 +39,41 @@ func newReceiveBuffer(defaultHeader []byte, ack io.Writer, pool BufferPool, wind
 		in:            make(chan []byte, windowSize),
 		ack:           ack,
 		pool:          pool,
+		closed:        make(chan interface{}),
 	}
 }
 
 // submit allows the session to submit a new frame to the receiveBuffer. If the
 // receiveBuffer has been closed, this is a noop.
 func (buf *receiveBuffer) submit(frame []byte) {
-	buf.mx.RLock()
-	closed := buf.closed
-	if closed {
-		buf.mx.RUnlock()
-		return
+	for {
+		if buf.doSubmit(frame) {
+			return
+		}
 	}
-	buf.in <- frame
-	buf.mx.RUnlock()
+}
+
+func (buf *receiveBuffer) doSubmit(frame []byte) bool {
+	buf.muClosing.RLock()
+	defer buf.muClosing.RUnlock()
+
+	select {
+	case <-buf.closed:
+		// already closed, don't bother
+		return true
+	default:
+		closeTimer := time.NewTimer(getCloseTimeout())
+		defer closeTimer.Stop()
+
+		select {
+		case buf.in <- frame:
+			// okay
+			return true
+		case <-closeTimer.C:
+			// don't block forever on writing to buf.in. This gives us a chance to see whether we've closed in the meantime
+			return false
+		}
+	}
 }
 
 // reads available data into the given buffer. If no data is queued, read will
@@ -78,7 +99,7 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 		select {
 		case frame, open := <-buf.in:
 			// Read next frame, continue loop
-			if !open && frame == nil {
+			if !open {
 				// we've hit the end
 				err = io.EOF
 				buf.ackIfNecessary()
@@ -105,18 +126,18 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				buf.ackIfNecessary()
 				return
 			}
-			timer := time.NewTimer(deadline.Sub(now))
+
+			readTimer := time.NewTimer(deadline.Sub(now))
 			select {
-			case <-timer.C:
+			case <-readTimer.C:
 				// Nothing read within deadline
 				err = ErrTimeout
-				timer.Stop()
 				buf.ackIfNecessary()
 				return
 			case frame, open := <-buf.in:
 				// Read next frame, continue loop
-				timer.Stop()
-				if !open && frame == nil {
+				readTimer.Stop()
+				if !open {
 					// we've hit the end
 					err = io.EOF
 					buf.ackIfNecessary()
@@ -132,24 +153,18 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 // ackIfNecessary acks every buf.ackInterval
 func (buf *receiveBuffer) ackIfNecessary() {
 	if buf.unacked >= buf.ackInterval {
-		buf.sendACK()
+		buf.doSendACK(buf.unacked)
 		buf.unacked = 0
 	}
 }
 
-func (buf *receiveBuffer) sendACK() {
-	buf.mx.RLock()
-	closed := buf.closed
-	buf.mx.RUnlock()
-	if closed {
-		// Don't bother acking
-		return
-	}
-	buf.doSendACK(buf.unacked)
-}
-
 func (buf *receiveBuffer) doSendACK(unacked int) {
-	buf.ack.Write(ackWithFrames(buf.defaultHeader, int32(unacked)))
+	select {
+	case <-buf.closed:
+		return
+	case buf.ack <- ackWithFrames(buf.defaultHeader, int32(unacked)):
+		// okay
+	}
 }
 
 func (buf *receiveBuffer) onFrame(frame []byte) {
@@ -163,10 +178,13 @@ func (buf *receiveBuffer) onFrame(frame []byte) {
 }
 
 func (buf *receiveBuffer) close() {
-	buf.mx.Lock()
-	if !buf.closed {
-		buf.closed = true
+	select {
+	case <-buf.closed:
+		return
+	default:
+		buf.muClosing.Lock()
+		close(buf.closed)
 		close(buf.in)
+		buf.muClosing.Unlock()
 	}
-	buf.mx.Unlock()
 }
