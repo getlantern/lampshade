@@ -62,11 +62,14 @@ func (buf *receiveBuffer) doSubmit(frame []byte) bool {
 		// already closed, don't bother
 		return true
 	default:
+		closeTimer := time.NewTimer(getCloseTimeout())
+		defer closeTimer.Stop()
+
 		select {
 		case buf.in <- frame:
 			// okay
 			return true
-		case <-time.After(closeTimeout):
+		case <-closeTimer.C:
 			// don't block forever on writing to buf.in. This gives us a chance to see whether we've closed in the meantime
 			return false
 		}
@@ -123,14 +126,17 @@ func (buf *receiveBuffer) read(b []byte, deadline time.Time) (totalN int, err er
 				buf.ackIfNecessary()
 				return
 			}
+
+			readTimer := time.NewTimer(deadline.Sub(now))
 			select {
-			case <-time.After(deadline.Sub(now)):
+			case <-readTimer.C:
 				// Nothing read within deadline
 				err = ErrTimeout
 				buf.ackIfNecessary()
 				return
 			case frame, open := <-buf.in:
 				// Read next frame, continue loop
+				readTimer.Stop()
 				if !open {
 					// we've hit the end
 					err = io.EOF

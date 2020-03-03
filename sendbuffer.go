@@ -2,6 +2,7 @@ package lampshade
 
 import (
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -9,8 +10,16 @@ import (
 )
 
 var (
-	closeTimeout = 30 * time.Second
+	closeTimeout = uint64(30 * time.Second)
 )
+
+func getCloseTimeout() time.Duration {
+	return time.Duration(atomic.LoadUint64(&closeTimeout))
+}
+
+func setCloseTimeout(newTimeout time.Duration) {
+	atomic.StoreUint64(&closeTimeout, uint64(newTimeout))
+}
 
 // sendBuffer buffers outgoing frames. It holds up to <windowSize> frames,
 // after which it starts back-pressuring.
@@ -26,11 +35,11 @@ type sendBuffer struct {
 	defaultHeader  []byte
 	window         *window
 	in             chan []byte
+	closeOnce      sync.Once
 	closeRequested chan bool
 	muClosing      sync.RWMutex
 	closing        bool
-	closed         sync.WaitGroup
-	writeTimer     *time.Timer
+	closed         chan interface{}
 }
 
 func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendBuffer {
@@ -39,9 +48,8 @@ func newSendBuffer(defaultHeader []byte, out chan []byte, windowSize int) *sendB
 		window:         newWindow(windowSize),
 		in:             make(chan []byte, windowSize),
 		closeRequested: make(chan bool, 1),
-		writeTimer:     time.NewTimer(largeTimeout),
+		closed:         make(chan interface{}),
 	}
-	buf.closed.Add(1)
 	ops.Go(func() { buf.sendLoop(out) })
 	return buf
 }
@@ -51,15 +59,15 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 	rstFrame := withFrameType(buf.defaultHeader, frameTypeRST)
 	closeTimedOut := make(chan interface{})
 
-	var closeOnce sync.Once
+	var signalCloseOnce sync.Once
 	signalClose := func() {
-		closeOnce.Do(func() {
+		signalCloseOnce.Do(func() {
 			go func() {
 				buf.muClosing.Lock()
 				buf.closing = true
 				close(buf.in)
 				buf.muClosing.Unlock()
-				time.Sleep(closeTimeout)
+				time.Sleep(getCloseTimeout())
 				close(closeTimedOut)
 			}()
 		})
@@ -71,13 +79,11 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 		case out <- b:
 			// okay
 		case sendRST = <-buf.closeRequested:
-			// close was requested while we were writing, try again and then send RST if necessary
+			// close was requested while we were writing, try again
+			signalClose()
 			write(b)
-			if sendRST {
-				write(rstFrame)
-			}
 		case <-closeTimedOut:
-			// closed before data could be sent
+			// closed before frame could be sent, give up
 		}
 	}
 
@@ -86,34 +92,32 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 			// Send an RST frame with the streamID
 			write(rstFrame)
 		}
-		buf.closed.Done()
+		close(buf.closed)
 	}()
 
 	for {
 		select {
 		case frame, open := <-buf.in:
-			if frame != nil {
-				windowAvailable := buf.window.sub(1)
+			if !open {
+				// We've closed
+				return
+			}
+			windowAvailable := buf.window.sub(1)
+			select {
+			case <-windowAvailable:
+				// send allowed
+				write(append(frame, buf.defaultHeader...))
+			case sendRST = <-buf.closeRequested:
+				// close requested before window available
+				signalClose()
 				select {
 				case <-windowAvailable:
 					// send allowed
 					write(append(frame, buf.defaultHeader...))
-				case sendRST = <-buf.closeRequested:
-					// close requested before window available
-					signalClose()
-					select {
-					case <-windowAvailable:
-						// send allowed
-						write(append(frame, buf.defaultHeader...))
-					case <-closeTimedOut:
-						// closed before window available
-						return
-					}
+				case <-closeTimedOut:
+					// closed before window available
+					return
 				}
-			}
-			if !open {
-				// We've closed
-				return
 			}
 		case sendRST = <-buf.closeRequested:
 			signalClose()
@@ -126,48 +130,58 @@ func (buf *sendBuffer) sendLoop(out chan []byte) {
 }
 
 func (buf *sendBuffer) send(b []byte, writeDeadline time.Time) (int, error) {
-	buf.muClosing.RLock()
-	n, err := buf.doSend(b, writeDeadline)
-	buf.muClosing.RUnlock()
-	return n, err
+	for {
+		processed, n, err := buf.doSend(b, writeDeadline)
+		if processed {
+			return n, err
+		}
+	}
 }
 
-func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (int, error) {
+func (buf *sendBuffer) doSend(b []byte, writeDeadline time.Time) (bool, int, error) {
+	buf.muClosing.RLock()
+	defer buf.muClosing.RUnlock()
+
 	if buf.closing {
-		return 0, syscall.EPIPE
+		return true, 0, syscall.EPIPE
 	}
+
+	closeTimer := time.NewTimer(getCloseTimeout())
+	defer closeTimer.Stop()
 
 	if writeDeadline.IsZero() {
 		// Don't bother implementing a timeout
-		buf.in <- b
-		return len(b), nil
+		select {
+		case buf.in <- b:
+			return true, len(b), nil
+		case <-closeTimer.C:
+			// don't block forever to give us a chance to close
+			return false, 0, nil
+		}
 	}
 
 	now := time.Now()
 	if writeDeadline.Before(now) {
-		return 0, ErrTimeout
+		return true, 0, ErrTimeout
 	}
-	if !buf.writeTimer.Stop() {
-		<-buf.writeTimer.C
-	}
-	buf.writeTimer.Reset(writeDeadline.Sub(now))
+
+	writeTimer := time.NewTimer(writeDeadline.Sub(now))
+	defer writeTimer.Stop()
+
 	select {
 	case buf.in <- b:
-		return len(b), nil
-	case <-buf.writeTimer.C:
-		return 0, ErrTimeout
+		return true, len(b), nil
+	case <-writeTimer.C:
+		return true, 0, ErrTimeout
+	case <-closeTimer.C:
+		// don't block forever to give us a chance to close
+		return false, 0, nil
 	}
 }
 
 func (buf *sendBuffer) close(sendRST bool) {
-	select {
-	case buf.closeRequested <- sendRST:
-		// okay
-	default:
-		// close already requested, ignore
-	}
-	if !buf.writeTimer.Stop() {
-		<-buf.writeTimer.C
-	}
-	buf.closed.Wait()
+	buf.closeOnce.Do(func() {
+		buf.closeRequested <- sendRST
+	})
+	<-buf.closed
 }

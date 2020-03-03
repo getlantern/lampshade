@@ -103,6 +103,8 @@ func TestWriteSplitting(t *testing.T) {
 }
 
 func TestStreamCloseRemoteAfterEcho(t *testing.T) {
+	setCloseTimeout(3 * time.Second)
+
 	l, dialer, wg, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
@@ -141,6 +143,8 @@ func TestStreamCloseRemoteAfterEcho(t *testing.T) {
 }
 
 func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
+	setCloseTimeout(3 * time.Second)
+
 	l, dialer, _, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
@@ -186,6 +190,8 @@ func TestPhysicalConnCloseRemotePrematurely(t *testing.T) {
 }
 
 func TestStreamCloseLocalPrematurely(t *testing.T) {
+	setCloseTimeout(3 * time.Second)
+
 	l, dialer, _, err := echoServerAndDialerWithIdleInterval(0, 5000000, 0)
 	if !assert.NoError(t, err) {
 		return
@@ -236,6 +242,8 @@ func TestStreamCloseLocalPrematurely(t *testing.T) {
 }
 
 func TestPhysicalConnCloseLocalPrematurely(t *testing.T) {
+	setCloseTimeout(3 * time.Second)
+
 	l, dialer, _, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
@@ -473,6 +481,8 @@ func TestOldClientsWithoutTimestamp(t *testing.T) {
 }
 
 func testConnBasicFlow(t *testing.T) {
+	setCloseTimeout(3 * time.Second)
+
 	l, dialer, wg, err := echoServerAndDialer(0)
 	if !assert.NoError(t, err) {
 		return
@@ -726,7 +736,7 @@ func TestPadding(t *testing.T) {
 		wg.Wait()
 		conn.Close()
 	}
-	writtenPacketsDistribution := make([][]int, 10)
+	writtenPacketsDistribution := make([][]int, rounds)
 	mu.RLock()
 	for i, wb := range writtenBytes {
 		for j := 0; j < len(wb); j++ {
