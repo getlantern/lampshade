@@ -207,9 +207,10 @@ import (
 	"net"
 	"time"
 
+	pool "github.com/libp2p/go-buffer-pool"
+
 	"github.com/getlantern/golog"
 	"github.com/getlantern/mtime"
-	"github.com/oxtoacart/bpool"
 )
 
 const (
@@ -342,40 +343,48 @@ type Stream interface {
 	Wrapped() net.Conn
 }
 
+// Deprecated: use github.com/libp2p/go-buffer-pool instead
+//
 // BufferPool is a pool of reusable buffers
 type BufferPool interface {
 	// getForFrame gets a complete buffer large enough to hold an entire lampshade
 	// frame
 	getForFrame() []byte
 
+	// Deprecated: use github.com/libp2p/go-buffer-pool instead
+	//
 	// Get gets a truncated buffer sized to hold the data portion of a lampshade
 	// frame
 	Get() []byte
 
+	// Deprecated: use github.com/libp2p/go-buffer-pool instead
+	//
 	// Put returns a buffer back to the pool, indicating that it is safe to
 	// reuse.
 	Put([]byte)
 }
 
-// NewBufferPool constructs a BufferPool with the given maximum size in bytes
+// Deprecated: use github.com/libp2p/go-buffer-pool instead
+//
+// NewBufferPool constructs a BufferPool.
+// The given maximum size in bytes is ignored.
 func NewBufferPool(maxBytes int) BufferPool {
-	return &bufferPool{bpool.NewBytePool(maxBytes/maxFrameSize, maxFrameSize)}
+	return &bufferPool{}
 }
 
 type bufferPool struct {
-	pool *bpool.BytePool
 }
 
 func (p *bufferPool) getForFrame() []byte {
-	return p.pool.Get()
+	return pool.Get(maxFrameSize)
 }
 
 func (p *bufferPool) Get() []byte {
-	return p.pool.Get()[:MaxDataLen]
+	return p.getForFrame()[:MaxDataLen]
 }
 
 func (p *bufferPool) Put(b []byte) {
-	p.pool.Put(b)
+	pool.Put(b)
 }
 
 func setFrameTypeAndID(header []byte, frameType byte, id uint16) {
