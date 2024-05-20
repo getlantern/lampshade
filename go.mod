@@ -22,7 +22,6 @@ require (
 	github.com/hashicorp/golang-lru v0.5.3
 	github.com/oxtoacart/bpool v0.0.0-20190530202638-03653db5a59c
 	github.com/stretchr/testify v1.5.1
-	golang.org/x/crypto v0.0.0-20191202143827-86a70503ff7e
-	golang.org/x/net v0.0.0-20190912160710-24e19bdeb0f2 // indirect
-	golang.org/x/sys v0.0.0-20190912141932-bc967efca4b8 // indirect
+	golang.org/x/crypto v0.21.0
+	golang.org/x/net v0.23.0 // indirect
 )
