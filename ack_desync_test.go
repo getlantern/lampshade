@@ -1,6 +1,8 @@
 package lampshade
 
 import (
+	"bytes"
+	"fmt"
 	"io"
 	"net"
 	"sync"
@@ -68,6 +70,7 @@ func TestAckForClosedStreamKeepsSessionInSync(t *testing.T) {
 	// client has closed it, exercising the stale-ACK parsing path.
 	var churnWG sync.WaitGroup
 	const churners = 10
+	churnErrCh := make(chan error, churners)
 	churnWG.Add(churners)
 	for i := 0; i < churners; i++ {
 		go func() {
@@ -75,10 +78,15 @@ func TestAckForClosedStreamKeepsSessionInSync(t *testing.T) {
 			for !stopped() {
 				conn, dialErr := dialer.Dial(doDial)
 				if dialErr != nil {
+					if !stopped() {
+						churnErrCh <- dialErr
+					}
 					return
 				}
 				conn.Write([]byte{1})
 				conn.Close()
+				// Bound the churn rate so constrained hosts aren't overwhelmed.
+				time.Sleep(time.Millisecond)
 			}
 		}()
 	}
@@ -92,7 +100,7 @@ func TestAckForClosedStreamKeepsSessionInSync(t *testing.T) {
 	var victimWG sync.WaitGroup
 	victimWG.Add(victims)
 	for i := 0; i < victims; i++ {
-		go func() {
+		go func(victim int) {
 			defer victimWG.Done()
 			conn, dialErr := dialer.Dial(doDial)
 			if dialErr != nil {
@@ -101,6 +109,9 @@ func TestAckForClosedStreamKeepsSessionInSync(t *testing.T) {
 			}
 			defer conn.Close()
 			payload := make([]byte, MaxDataLen)
+			for k := range payload {
+				payload[k] = byte(victim + k)
+			}
 			echoed := make([]byte, MaxDataLen)
 			for j := 0; j < rounds && !stopped(); j++ {
 				conn.SetDeadline(time.Now().Add(15 * time.Second))
@@ -112,9 +123,13 @@ func TestAckForClosedStreamKeepsSessionInSync(t *testing.T) {
 					errCh <- readErr
 					return
 				}
+				if !bytes.Equal(payload, echoed) {
+					errCh <- fmt.Errorf("echo mismatch on round %d", j)
+					return
+				}
 			}
 			errCh <- nil
-		}()
+		}(i)
 	}
 
 	victimWG.Wait()
@@ -123,5 +138,9 @@ func TestAckForClosedStreamKeepsSessionInSync(t *testing.T) {
 
 	for i := 0; i < victims; i++ {
 		require.NoError(t, <-errCh, "victim stream stalled: session-frame parser lost sync")
+	}
+	close(churnErrCh)
+	for churnErr := range churnErrCh {
+		require.NoError(t, churnErr, "churn stream stopped early: stale-ACK path not exercised")
 	}
 }
