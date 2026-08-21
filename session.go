@@ -260,16 +260,19 @@ func (s *session) recvLoop() {
 				// Padding is always at the end of a session frame, so stop processing
 				break frameLoop
 			case frameTypeACK:
-				c, open := s.getOrCreateStream(id)
-				if !open {
-					// Stream was already closed, ignore
-					continue
-				}
+				// Always consume the acked-frames field, even for closed
+				// streams, to keep the parser aligned with the remaining
+				// frames in this session frame.
 				ackedFrames := b[headerSize:ackFrameSize]
 				_, err = io.ReadFull(r, ackedFrames)
 				if err != nil {
 					s.onSessionError(err, nil)
 					return
+				}
+				c, open := s.getOrCreateStream(id)
+				if !open {
+					// Stream was already closed, ignore
+					continue
 				}
 				c.ack(int(binaryEncoding.Uint32(ackedFrames)))
 				continue
